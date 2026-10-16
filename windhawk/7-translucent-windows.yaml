@@ -1,0 +1,21 @@
+# Lembas — Translucent Windows (File Explorer glass)
+# Windhawk → Translucent Windows → Settings → "Textual mode" → paste everything → Save settings.
+# Makes the whole File Explorer window (file list and side panel too) see-through Mica, tinted by
+# the Lembas wallpaper, and paints its controls in the accent colour. Only File Explorer is
+# changed; every other app is left alone. Restart Explorer afterwards.
+RenderingMod:
+  ThemeBackground: 0
+  SysColors: 0
+  AccentColorControls: 0
+BackgroundEffects:
+  type: none
+  AccentBlurBehind: 3A232323
+FlyoutsEffects: 0
+RuledPrograms:
+  - target: explorer.exe
+    RenderingMod:
+      ThemeBackground: 1
+      AccentColorControls: 1
+    BackgroundEffects:
+      type: mica_tabbed
+      AccentBlurBehind: 3A232323

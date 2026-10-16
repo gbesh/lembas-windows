@@ -1,0 +1,115 @@
+# Lembas — Windows 11 Notification Center Styler
+# Windhawk → Windows 11 Notification Center Styler → Settings → "Textual mode" → paste everything → Save settings.
+# Notifications, calendar, quick settings and media controls get the same parchment/midnight glass.
+themeResourceVariables:
+  - LembasTint@Light=#B8F3E8CD
+  - LembasTint@Dark=#B00B1020
+  - LembasEdge@Light=#997A5A34
+  - LembasEdge@Dark=#73D9BC7A
+styleConstants:
+  - Glass=<WindhawkBlur BlurAmount="34" TintColor="{ThemeResource LembasTint}"/>
+  - Edge=<SolidColorBrush Color="{ThemeResource LembasEdge}"/>
+controlStyles:
+  - target: Grid#NotificationCenterGrid
+    styles:
+      - Background:=$Glass
+      - BorderBrush:=$Edge
+      - BorderThickness=1
+      - CornerRadius=12
+  - target: Grid#CalendarCenterGrid
+    styles:
+      - Background:=$Glass
+      - BorderBrush:=$Edge
+      - BorderThickness=1
+      - CornerRadius=12
+  - target: ScrollViewer#CalendarControlScrollViewer
+    styles:
+      - Background=Transparent
+  - target: Border#CalendarHeaderMinimizedOverlay
+    styles:
+      - Background=Transparent
+  - target: ActionCenter.FocusSessionControl#FocusSessionControl > Grid#FocusGrid
+    styles:
+      - Background=Transparent
+  - target: Grid#ControlCenterRegion
+    styles:
+      - Background:=$Glass
+      - BorderBrush:=$Edge
+      - BorderThickness=1
+      - CornerRadius=12
+  - target: Windows.UI.Xaml.Controls.Grid#L1Grid > Border
+    styles:
+      - Background=Transparent
+  - target: Windows.UI.Xaml.Controls.Grid#MediaTransportControlsRegion
+    styles:
+      - Background:=$Glass
+      - BorderBrush:=$Edge
+      - BorderThickness=1
+      - CornerRadius=12
+  - target: Grid#MediaTransportControlsRoot
+    styles:
+      - Background=Transparent
+  - target: ContentPresenter#PageContent
+    styles:
+      - Background=Transparent
+  - target: ContentPresenter#PageContent > Grid > Border
+    styles:
+      - Background=Transparent
+  - target: QuickActions.ControlCenter.AccessibleWindow#PageWindow > ContentPresenter > Grid#FullScreenPageRoot
+    styles:
+      - Background=Transparent
+  - target: QuickActions.ControlCenter.AccessibleWindow#PageWindow > ContentPresenter > Grid#FullScreenPageRoot > ContentPresenter#PageHeader
+    styles:
+      - Background=Transparent
+  - target: ScrollViewer#ListContent
+    styles:
+      - Background=Transparent
+  # Pop-up notifications (toasts)
+  - target: ActionCenter.FlexibleToastView#FlexibleNormalToastView
+    styles:
+      - Background=Transparent
+  - target: Border#ToastBackgroundBorder, Border#ToastBackgroundBorder2
+    styles:
+      - Background:=$Glass
+      - BorderBrush:=$Edge
+      - BorderThickness=1
+      - CornerRadius=12
+  - target: ActionCenter.FlexibleItemView
+    styles:
+      - CornerRadius=12
+  # Jump lists (right-click on a taskbar app) and menus
+  - target: Border#JumpListRestyledAcrylic
+    styles:
+      - Background:=$Glass
+      - BorderBrush:=$Edge
+      - BorderThickness=1
+      - CornerRadius=12
+  - target: MenuFlyoutPresenter > Border
+    styles:
+      - Background:=$Glass
+      - BorderBrush:=$Edge
+      - BorderThickness=1
+      - CornerRadius=10
+  # ---- Type: Cinzel headings and Cormorant Garamond for the big clock; the rest stays in the Windows font
+  - target: TextBlock#NotificationsTextBlock
+    styles:
+      - FontFamily=Cinzel
+      - FontWeight=SemiBold
+  - target: TextBlock#PageTitle
+    styles:
+      - FontFamily=Cinzel
+  - target: TextBlock#PageTitleText
+    styles:
+      - FontFamily=Cinzel
+  # Calendar
+  - target: Button#DateTextButtonWithClock > Grid > Border#Border > ContentPresenter#ContentPresenter
+    styles:
+      - FontFamily=Cinzel
+  - target: TextBlock#ClockWithMeridian
+    styles:
+      - FontFamily=Cormorant Garamond
+      - FontWeight=SemiBold
+  - target: Button#HeaderButton > ContentPresenter#Text > TextBlock
+    styles:
+      - FontFamily=Cinzel
+      - FontWeight=SemiBold

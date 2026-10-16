@@ -1,0 +1,31 @@
+# Lembas — Explorer Visual Tweaks Dark
+# Windhawk → Explorer Visual Tweaks Dark → Settings → "Textual mode" → paste everything → Save settings.
+# Drive-space bars in This PC become gold (red when a drive is nearly full), the sidebar focus
+# marker is gold, and the preview pane is midnight blue at night. File selection is left to the
+# gold accent colour, so it reads well by day and by night. Restart Explorer afterwards.
+itemsView:
+  customizeItemsView: 0
+navigationPane:
+  customizeNavigationPane: 1
+  showFocusPill: 1
+  focusPillColor: 'D9BC7A'
+selectionAppearance:
+  cornerRadius: 4
+  showBorder: 1
+  activeFillColor: '3A3220'
+  activeBorderColor: '8A7340'
+  multiFillColor: '332C1C'
+  multiBorderColor: '7A6538'
+progress:
+  customizeProgress: 1
+  radius: 4
+  fillLeft: 'B8892F'
+  fillRight: 'E2C46F'
+  fullLeft: '7A1E14'
+  fullRight: 'B8392A'
+  background: '4A4232'
+  showProgressBorder: 1
+  backgroundBorder: '2B1E12'
+previewPane:
+  matchDetailsPaneBg: 1
+  previewPaneBgColor: '0E1430'

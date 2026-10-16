@@ -1,0 +1,109 @@
+# Lembas — Windows 11 Start Menu Styler
+# Windhawk → Windows 11 Start Menu Styler → Settings → "Textual mode" → paste everything → Save settings.
+# Works with both the classic and the redesigned (25H2) Start menu; parts that don't exist are skipped.
+themeResourceVariables:
+  - LembasTint@Light=#B8F3E8CD
+  - LembasTint@Dark=#B00B1020
+  - LembasPanel@Light=#14FFFFFF
+  - LembasPanel@Dark=#140B1020
+  - LembasEdge@Light=#997A5A34
+  - LembasEdge@Dark=#73D9BC7A
+  - LembasHover@Light=#1F7A5A34
+  - LembasHover@Dark=#26D9BC7A
+  - LembasField@Light=#33FFF8E6
+  - LembasField@Dark=#330A0E1A
+styleConstants:
+  - Glass=<WindhawkBlur BlurAmount="36" TintColor="{ThemeResource LembasTint}"/>
+  - Edge=<SolidColorBrush Color="{ThemeResource LembasEdge}"/>
+controlStyles:
+  # Start and search panels
+  - target: Border#AcrylicBorder
+    styles:
+      - Background:=$Glass
+      - BorderBrush:=$Edge
+      - BorderThickness=1
+      - CornerRadius=12
+  - target: Border#AcrylicOverlay
+    styles:
+      - Visibility=Collapsed
+  - target: Border#AppBorder
+    styles:
+      - Background:=$Glass
+      - BorderBrush:=$Edge
+      - BorderThickness=1
+      - CornerRadius=12
+  - target: Border#AccentAppBorder
+    styles:
+      - Background:=$Glass
+      - BorderBrush:=$Edge
+      - BorderThickness=1
+      - CornerRadius=12
+  - target: Border#LayerBorder
+    styles:
+      - Visibility=Collapsed
+  - target: Border#dropshadow
+    styles:
+      - CornerRadius=12
+  - target: Border#StartDropShadow
+    styles:
+      - CornerRadius=12
+  # Search box: a quiet field with a ruled edge
+  - target: Border#BorderElement
+    styles:
+      - Background:=<SolidColorBrush Color="{ThemeResource LembasField}"/>
+      - BorderBrush:=$Edge
+      - BorderThickness=1
+      - CornerRadius=8
+  - target: Border#TaskbarSearchBackground
+    styles:
+      - Background:=<SolidColorBrush Color="{ThemeResource LembasField}"/>
+      - CornerRadius=8
+  # Folders, menus and tooltips
+  - target: StartMenu.FolderModal > Grid > Border
+    styles:
+      - Background:=$Glass
+      - BorderBrush:=$Edge
+      - BorderThickness=1
+      - CornerRadius=12
+  - target: MenuFlyoutPresenter > Border
+    styles:
+      - Background:=$Glass
+      - BorderBrush:=$Edge
+      - BorderThickness=1
+      - CornerRadius=10
+  - target: ToolTip > ContentPresenter#LayoutRoot
+    styles:
+      - Background:=$Glass
+      - BorderBrush:=$Edge
+      - CornerRadius=6
+  # The power / account strip at the bottom
+  - target: Border#RootPanelBorder
+    styles:
+      - Background:=<SolidColorBrush Color="{ThemeResource LembasPanel}"/>
+  # Headings in Cinzel; everything else keeps the clear Windows font
+  - target: TextBlock#PinnedListHeaderText
+    styles:
+      - FontFamily=Cinzel
+      - FontWeight=SemiBold
+      - FontSize=15
+  - target: TextBlock#AllListHeadingText
+    styles:
+      - FontFamily=Cinzel
+      - FontWeight=SemiBold
+      - FontSize=15
+  - target: TextBlock#ZoomedOutHeading
+    styles:
+      - FontFamily=Cinzel
+  - target: Button#Header > Border > TextBlock
+    styles:
+      - FontFamily=Cinzel
+      - FontWeight=SemiBold
+  # Hover highlight on pinned and listed apps
+  - target: StartDocked.AppListViewItem > Grid@CommonStates > Border
+    styles:
+      - CornerRadius=8
+      - Background@PointerOver:=<SolidColorBrush Color="{ThemeResource LembasHover}"/>
+  - target: ListViewItem > Grid#ContentBorder@CommonStates
+    styles:
+      - CornerRadius=8
+      - Background@PointerOver:=<SolidColorBrush Color="{ThemeResource LembasHover}"/>

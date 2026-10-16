@@ -1,0 +1,85 @@
+# Lembas — Windows 11 Taskbar Styler
+# Windhawk → Windows 11 Taskbar Styler → Settings → "Textual mode" → paste everything → Save settings.
+# Parchment and red ink in light mode (day), midnight glass and gold in dark mode (night).
+# It follows Windows' light/dark mode automatically.
+themeResourceVariables:
+  - LembasTint@Light=#A8F3E8CD
+  - LembasTint@Dark=#A00B1020
+  - LembasFlyout@Light=#C8F5EBD2
+  - LembasFlyout@Dark=#C0121628
+  - LembasEdge@Light=#997A5A34
+  - LembasEdge@Dark=#80D9BC7A
+  - LembasMark@Light=#FF9A2A1C
+  - LembasMark@Dark=#FFD9BC7A
+  - LembasHover@Light=#1F7A5A34
+  - LembasHover@Dark=#24D9BC7A
+styleConstants:
+  - Glass=<WindhawkBlur BlurAmount="28" TintColor="{ThemeResource LembasTint}"/>
+  - FlyoutGlass=<WindhawkBlur BlurAmount="30" TintColor="{ThemeResource LembasFlyout}"/>
+controlStyles:
+  # The taskbar itself: blurred parchment by day, midnight glass by night
+  - target: Taskbar.TaskbarFrame > Grid#RootGrid > Taskbar.TaskbarBackground > Grid > Rectangle#BackgroundFill
+    styles:
+      - Fill:=$Glass
+  # The thin rule along the top edge, like a ruled page / a gold line
+  - target: Rectangle#BackgroundStroke
+    styles:
+      - Fill:=<SolidColorBrush Color="{ThemeResource LembasEdge}"/>
+  # Window previews
+  - target: Taskbar.TaskbarBackground#HoverFlyoutBackgroundControl > Grid > Rectangle#BackgroundFill
+    styles:
+      - Fill:=$FlyoutGlass
+  # Open-app indicator: a red ink stroke by day, a gold one by night
+  - target: Grid#IconPanel@RunningIndicatorStates > Rectangle#RunningIndicator, Taskbar.TaskListLabeledButtonPanel@RunningIndicatorStates > Rectangle#RunningIndicator
+    styles:
+      - Fill:=<SolidColorBrush Color="{ThemeResource LembasMark}"/>
+      - Height=3
+      - RadiusX=1.5
+      - RadiusY=1.5
+      - Width@ActiveRunningIndicator=18
+      - Width@InactiveRunningIndicator=6
+  # Softer, rounder buttons
+  - target: Taskbar.TaskListButton
+    styles:
+      - CornerRadius=8
+  - target: Taskbar.ExperienceToggleButton
+    styles:
+      - CornerRadius=8
+  - target: Taskbar.SearchBoxButton
+    styles:
+      - CornerRadius=8
+  # Start button: the Lembas star in a gold ring
+  - target: Taskbar.ExperienceToggleButton#LaunchListButton[AutomationProperties.AutomationId=StartButton] > Taskbar.TaskListButtonPanel > Grid > Border#BackgroundElement, Taskbar.ExperienceToggleButton#LaunchListButton[AutomationProperties.AutomationId=StartButton] > Taskbar.TaskListButtonPanel > Border#BackgroundElement
+    styles:
+      - Background:=<ImageBrush Stretch="Uniform" ImageSource="{{LEMBAS}}\Images\start.png"/>
+  - target: Taskbar.ExperienceToggleButton#LaunchListButton[AutomationProperties.AutomationId=StartButton] > Taskbar.TaskListButtonPanel > Grid > Microsoft.UI.Xaml.Controls.AnimatedVisualPlayer#Icon, Taskbar.ExperienceToggleButton#LaunchListButton[AutomationProperties.AutomationId=StartButton] > Taskbar.TaskListButtonPanel > Microsoft.UI.Xaml.Controls.AnimatedVisualPlayer#Icon
+    styles:
+      - Visibility=Collapsed
+  # App names on the taskbar (if labels are shown)
+  # Window previews and tooltips
+  - target: Taskbar.TaskItemThumbnailView > Grid > Border
+    styles:
+      - CornerRadius=8
+  - target: ToolTip > ContentPresenter#LayoutRoot
+    styles:
+      - Background:=$FlyoutGlass
+      - BorderBrush:=<SolidColorBrush Color="{ThemeResource LembasEdge}"/>
+      - CornerRadius=6
+  # Alt+Tab and Task View: the same glass behind each window title
+  - target: WindowsInternal.ComposableShell.Experiences.Switcher.SwitchItemElement > Grid#RootGrid > Grid#TitleGrid > Border#BackgroundBorder
+    styles:
+      - Background:=$FlyoutGlass
+      - CornerRadius=8
+  # Hidden-icons tray and right-click menus
+  - target: Border#OverflowFlyoutBackgroundBorder
+    styles:
+      - Background:=$FlyoutGlass
+      - BorderBrush:=<SolidColorBrush Color="{ThemeResource LembasEdge}"/>
+      - BorderThickness=1
+      - CornerRadius=10
+  - target: MenuFlyoutPresenter > Border
+    styles:
+      - Background:=$FlyoutGlass
+      - BorderBrush:=<SolidColorBrush Color="{ThemeResource LembasEdge}"/>
+      - BorderThickness=1
+      - CornerRadius=10
