@@ -1,0 +1,67 @@
+# Lembas — Windows 11 Settings Styler
+# Windhawk → Windows 11 Settings Styler → Settings → "Textual mode" → paste everything → Save settings.
+# The Settings app with parchment / midnight cards, ruled edges and icons in red ink
+# (day) or gold (night). Close and reopen Settings afterwards.
+theme: ""
+themeResourceVariables:
+  - LembasCard@Light=#8CFBF4E0
+  - LembasCard@Dark=#8C141A30
+  - LembasEdge@Light=#737A5A34
+  - LembasEdge@Dark=#59D9BC7A
+  - LembasMark@Light=#FF9A2A1C
+  - LembasMark@Dark=#FFD9BC7A
+  - LembasPage@Light=#40F3E8CD
+  - LembasPage@Dark=#400B1020
+styleConstants:
+  - Card=<SolidColorBrush Color="{ThemeResource LembasCard}"/>
+  - Edge=<SolidColorBrush Color="{ThemeResource LembasEdge}"/>
+  - Mark=<SolidColorBrush Color="{ThemeResource LembasMark}"/>
+  - Page=<SolidColorBrush Color="{ThemeResource LembasPage}"/>
+controlStyles:
+  # Page background: a light wash over the window glass
+  - target: SplitView#RootSplitView > Grid > Grid#ContentRoot > Border > Grid#ContentGrid
+    styles:
+      - Background:=$Page
+  # Icons beside each setting: red ink by day, gold by night
+  - target: ContentPresenter#IconContentPresenter
+    styles:
+      - Foreground:=$Mark
+  # Setting cards: parchment / midnight with a ruled edge
+  - target: SystemSettings.View.SettingsExpander > Grid > SystemSettings.View.ExpanderToggleButton#ContainerButton > ContentPresenter#ContentPresenter
+    styles:
+      - Background:=$Card
+      - BorderBrush:=$Edge
+      - BorderThickness=1
+      - CornerRadius=10
+  - target: SystemSettings.View.SettingsExpander > Grid > ContentPresenter#RevealedContent
+    styles:
+      - CornerRadius=0,0,10,10
+  - target: Windows.UI.Xaml.Controls.Primitives.ListViewItemPresenter > SystemSettings.View.EntityItem > Grid
+    styles:
+      - Background:=$Card
+      - BorderBrush:=$Edge
+      - BorderThickness=1
+      - CornerRadius=10
+  - target: SystemSettings.View.SpacingStackPanel > ContentPresenter > SystemSettings.View.EntityItem > Grid
+    styles:
+      - Background:=$Card
+      - BorderBrush:=$Edge
+      - BorderThickness=1
+      - CornerRadius=10
+  - target: SystemSettings.View.ButtonEntityItem > Button#ContainerButton > ContentPresenter#ContentPresenter
+    styles:
+      - Background:=$Card
+      - BorderBrush:=$Edge
+      - BorderThickness=1
+      - CornerRadius=10
+  - target: SystemSettings.View.SettingsListViewItem > Windows.UI.Xaml.Controls.Primitives.ListViewItemPresenter > Border
+    styles:
+      - CornerRadius=10
+  # Search box
+  - target: TextBox#CommandSearchTextBox
+    styles:
+      - CornerRadius=8
+      - BorderBrush:=$Edge
+  - target: StackPanel#SettingsCommandSearchBoxBackground
+    styles:
+      - CornerRadius=8

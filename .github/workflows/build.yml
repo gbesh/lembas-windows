@@ -1,0 +1,78 @@
+name: Build Lembas for Windows
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "README.md"
+  workflow_dispatch:
+
+jobs:
+  kit:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq llvm lld libcairo2
+          pip install pillow numpy playwright cairosvg pyyaml
+          python -m playwright install --with-deps chromium
+          # llvm-rc / lld-link may be versioned (llvm-rc-18); make plain names available
+          for t in llvm-rc lld-link; do
+            command -v $t || sudo ln -sf "$(ls /usr/bin/$t-* /usr/lib/llvm-*/bin/$t 2>/dev/null | sort -V | tail -1)" /usr/local/bin/$t
+          done
+          command -v llvm-rc lld-link
+
+      - name: Fonts (SIL Open Font License)
+        run: |
+          mkdir -p assets/fonts && cd assets/fonts
+          base=https://raw.githubusercontent.com/google/fonts/main/ofl
+          get() { curl -fsSL -o "$1" "$2"; }
+          get Cinzel.ttf                   "$base/cinzel/Cinzel%5Bwght%5D.ttf"
+          get CormorantGaramond.ttf        "$base/cormorantgaramond/CormorantGaramond%5Bwght%5D.ttf"
+          get CormorantGaramond-Italic.ttf "$base/cormorantgaramond/CormorantGaramond-Italic%5Bwght%5D.ttf"
+          get IMFellEnglish-Regular.ttf    "$base/imfellenglish/IMFeENrm28P.ttf"
+          get IMFellEnglish-Italic.ttf     "$base/imfellenglish/IMFeENit28P.ttf"
+          get IMFellEnglishSC-Regular.ttf  "$base/imfellenglishsc/IMFeENsc28P.ttf"
+          get Fraunces.ttf                 "$base/fraunces/Fraunces%5BSOFT%2CWONK%2Copsz%2Cwght%5D.ttf"
+          get Fraunces-Italic.ttf          "$base/fraunces/Fraunces-Italic%5BSOFT%2CWONK%2Copsz%2Cwght%5D.ttf"
+          get AlegreyaSans-Medium.ttf      "$base/alegreyasans/AlegreyaSans-Medium.ttf"
+          get Alegreya.ttf                 "$base/alegreya/Alegreya%5Bwght%5D.ttf"
+          get Alegreya-Italic.ttf          "$base/alegreya/Alegreya-Italic%5Bwght%5D.ttf"
+          get OFL-Alegreya.txt             "$base/alegreya/OFL.txt"
+          get OFL-Cinzel.txt               "$base/cinzel/OFL.txt"
+          get OFL-CormorantGaramond.txt    "$base/cormorantgaramond/OFL.txt"
+          get OFL-IMFellEnglish.txt        "$base/imfellenglish/OFL.txt"
+          get OFL-Fraunces.txt             "$base/fraunces/OFL.txt"
+          get OFL-AlegreyaSans.txt         "$base/alegreyasans/OFL.txt"
+
+      - name: Wallpapers, cursors, sounds
+        run: |
+          python tools/render_wallpapers.py assets/wall4k
+          python tools/make_cursors.py assets/cursors
+          python tools/make_sounds.py assets/sounds
+          python tools/make_icons.py assets/icons
+
+      - name: Assemble and zip
+        run: |
+          VERSION="$(date -u +%Y.%m.%d.%H%M)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          LEMBAS_VERSION="$VERSION" python tools/build_kit.py assets "out/Lembas for Windows"
+          cd out && zip -qr ../Lembas-for-Windows.zip "Lembas for Windows"
+
+      - name: Publish the release (installed copies update themselves from the newest one)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION" Lembas-for-Windows.zip --title "Lembas for Windows $VERSION" --latest \
+            --notes "Download **Lembas-for-Windows.zip**, extract it and double-click **Install Lembas**. Already installed? It updates itself within a day (or Start > Lembas > Update). Built from ${GITHUB_SHA::7}."
+          # keep the five newest releases
+          gh release list --limit 100 --json tagName -q '.[5:][].tagName' | xargs -r -n1 gh release delete -y --cleanup-tag

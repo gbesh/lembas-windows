@@ -1,0 +1,26 @@
+# Lembas — Window Border Customizer
+# Windhawk → Window Border Customizer → Settings → "Textual mode" → paste everything → Save settings.
+# A thin ink-brown rule around every window by day and a gold one by night (paler when the
+# window isn't active), and the same edge on right-click menus and tooltips.
+normal_window_border:
+  enable_custom_border: 1
+  color: '#C07A5A34'
+  dark_color: '#C0D9BC7A'
+  enable_unfocused: 1
+  unfocused_color: '#507A5A34'
+  unfocused_dark_color: '#50D9BC7A'
+maximized_window_border:
+  show_custom_border: 0
+  color: '#C07A5A34'
+  dark_color: '#C0D9BC7A'
+  enable_unfocused: 0
+  unfocused_color: '#507A5A34'
+  unfocused_dark_color: '#50D9BC7A'
+context_menu_border:
+  enable_custom_border: 1
+  color: '#997A5A34'
+  dark_color: '#99D9BC7A'
+tooltip_border:
+  enable_custom_border: 1
+  color: '#997A5A34'
+  dark_color: '#99D9BC7A'

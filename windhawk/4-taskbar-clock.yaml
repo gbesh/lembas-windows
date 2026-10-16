@@ -1,0 +1,38 @@
+# Lembas — Taskbar Clock Customization
+# Windhawk → Taskbar Clock Customization → Settings → "Textual mode" → paste everything → Save settings.
+# Time in Cormorant Garamond; below it, the Shire name of the day (Highday, Sterday, Trewsday…) and the date.
+# (On/off settings are written as 1/0, which every Windhawk version accepts.)
+ShowSeconds: 0
+TimeFormat: ''
+DateFormat: d MMMM
+DateLocale: ''
+WeekdayFormat: custom
+WeekdayFormatCustom: Sunday, Monday, Trewsday, Hevensday, Mersday, Highday, Sterday
+TopLine: '%time%'
+BottomLine: '%weekday% · %date%'
+TooltipLine: ''
+TooltipLineMode: append
+MaxWidth: 0
+TextSpacing: 0
+TimeStyle:
+  Hidden: 0
+  TextColor: ''
+  TextAlignment: Right
+  FontSize: 15
+  FontFamily: Cormorant Garamond
+  FontWeight: SemiBold
+  FontStyle: ''
+  FontStretch: ''
+  CharacterSpacing: 10
+  LineHeight: 0
+DateStyle:
+  Hidden: 0
+  TextColor: ''
+  TextAlignment: Right
+  FontSize: 13
+  FontFamily: ''
+  FontWeight: ''
+  FontStyle: ''
+  FontStretch: ''
+  CharacterSpacing: 0
+  LineHeight: 0

@@ -1,0 +1,11 @@
+# Lembas — Resource Redirect (the Lembas icons everywhere)
+# Windhawk → Resource Redirect → Settings → "Textual mode" → paste everything → Save settings.
+# Folders become parchment folios (with a quill, harp, mountain... for Documents, Music,
+# Pictures...), drives become iron-bound chests, USB sticks leaf-wrapped parcels, discs round
+# shields, This PC a round green door, the network a palantír and the Recycle Bin a barrel.
+# Restart Explorer (or sign out and in) to see every icon change.
+iconTheme: ""
+disableThumbnails: 1
+allResourceRedirect: 0
+themePaths:
+  - '{{LEMBAS}}\IconTheme'

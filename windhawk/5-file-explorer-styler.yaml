@@ -1,0 +1,128 @@
+# Lembas — Windows 11 File Explorer Styler
+# Windhawk → Windows 11 File Explorer Styler → Settings → "Textual mode" → paste everything → Save settings.
+# Tabs, address bar, search and toolbar become parchment and red ink by day, deep midnight blue
+# and gold by night, over a see-through window that takes its colour from the wallpaper.
+# The Home page shows the Lembas scene (Shire by day, starlit sky by night).
+# Close and reopen File Explorer windows afterwards.
+theme: ""
+backgroundTranslucentEffect: acrylic
+backgroundTranslucentEffectRegion: ""
+themeResourceVariables:
+  - LembasBar@Light=#A6F3E4C0
+  - LembasBar@Dark=#A6141C3E
+  - LembasField@Light=#CCFFF9EA
+  - LembasField@Dark=#CC0E1430
+  - LembasTab@Light=#E6FBF4E0
+  - LembasTab@Dark=#E61F2A52
+  - LembasEdge@Light=#B37A5A34
+  - LembasEdge@Dark=#B3D9BC7A
+  - LembasMark@Light=#FF9A2A1C
+  - LembasMark@Dark=#FFD9BC7A
+  - LembasHover@Light=#2E7A5A34
+  - LembasHover@Dark=#38D9BC7A
+  - LembasArt@Light:=<BitmapImage UriSource="{{LEMBAS}}\Images\home-light.jpg"/>
+  - LembasArt@Dark:=<BitmapImage UriSource="{{LEMBAS}}\Images\home-dark.jpg"/>
+  - LembasPane@Light=#60F3E4C0
+  - LembasPane@Dark=#600E1430
+styleConstants:
+  - Bar=<WindhawkBlur BlurAmount="24" TintColor="{ThemeResource LembasBar}"/>
+  - Field=<SolidColorBrush Color="{ThemeResource LembasField}"/>
+  - Tab=<SolidColorBrush Color="{ThemeResource LembasTab}"/>
+  - Edge=<SolidColorBrush Color="{ThemeResource LembasEdge}"/>
+  - Mark=<SolidColorBrush Color="{ThemeResource LembasMark}"/>
+  - Hover=<SolidColorBrush Color="{ThemeResource LembasHover}"/>
+  - Pane=<WindhawkBlur BlurAmount="30" TintColor="{ThemeResource LembasPane}"/>
+  - Art=<ImageBrush ImageSource="{ThemeResource LembasArt}" Stretch="UniformToFill" AlignmentY="Bottom" Opacity="0.85"/>
+controlStyles:
+  # ---- the selected tab: a sheet of parchment / a midnight page, with a ruled edge
+  - target: TabViewItem > Grid#LayoutRoot > Canvas > Microsoft.UI.Xaml.Shapes.Path#SelectedBackgroundPath
+    styles:
+      - Fill:=$Tab
+      - Stroke:=$Edge
+      - StrokeThickness=1
+  - target: Grid#TabContainerGrid
+    styles:
+      - Background:=$Bar
+  - target: Grid#TabContainerGrid > Border#LeftBottomBorderLine
+    styles:
+      - Background:=$Edge
+  - target: Grid#TabContainerGrid > Border#RightBottomBorderLine
+    styles:
+      - Background:=$Edge
+  - target: TabViewItem > Grid#LayoutRoot@CommonStates
+    styles:
+      - Background@PointerOver:=$Hover
+  # ---- toolbar (New, Cut, Copy, Sort, View...)
+  - target: FileExplorerExtensions.CommandBarControl_Wave1 > Grid, Grid#CommandBarControlRootGrid
+    styles:
+      - Background:=$Bar
+      - BorderThickness=0,0,0,1
+      - BorderBrush:=$Edge
+  - target: CommandBar#FileExplorerCommandBar
+    styles:
+      - Background=Transparent
+  - target: Microsoft.UI.Xaml.Controls.AppBarButton > Grid@CommonStates
+    styles:
+      - CornerRadius=8
+      - Background@PointerOver:=$Hover
+  - target: Microsoft.UI.Xaml.Controls.AppBarSeparator
+    styles:
+      - Foreground:=$Edge
+  # ---- address bar, breadcrumbs and search box
+  - target: Grid#NavigationBarControlGrid
+    styles:
+      - Background:=$Bar
+  - target: Microsoft.UI.Xaml.Controls.Grid#FileExplorerAddressBarGrid
+    styles:
+      - Background:=$Field
+      - BorderBrush:=$Edge
+      - BorderThickness=1
+      - CornerRadius=8
+  - target: Microsoft.UI.Xaml.Controls.AutoSuggestBox#FileExplorerSearchBox > Microsoft.UI.Xaml.Controls.Grid#LayoutRoot > Microsoft.UI.Xaml.Controls.TextBox#TextBox
+    styles:
+      - Background:=$Field
+      - BorderBrush:=$Edge
+      - BorderThickness=1
+      - CornerRadius=8
+  - target: Microsoft.UI.Xaml.Controls.AppBarButton#backButton > Grid@CommonStates
+    styles:
+      - CornerRadius=8
+      - Background@PointerOver:=$Hover
+  - target: Microsoft.UI.Xaml.Controls.AppBarButton#forwardButton > Grid@CommonStates
+    styles:
+      - CornerRadius=8
+      - Background@PointerOver:=$Hover
+  # ---- Home, Gallery and the details pane let the window glass show through
+  - target: Grid#HomeViewRootGrid
+    styles:
+      - Background:=$Art
+  - target: FileExplorerExtensions.GalleryViewControl#GalleryViewControl > Grid
+    styles:
+      - Background=Transparent
+  - target: Microsoft.UI.Xaml.Controls.Grid#GalleryRootGrid
+    styles:
+      - Background=Transparent
+  - target: Grid#DetailsViewControlRootGrid
+    styles:
+      - Background:=$Pane
+  - target: StackPanel#DetailsViewThumbnail > Grid
+    styles:
+      - Background=Transparent
+  # ---- tooltips and the toolbar's "..." menu
+  - target: ToolTip
+    styles:
+      - Background:=$Bar
+      - BorderBrush:=$Edge
+      - CornerRadius=6
+  - target: CommandBarOverflowPresenter#SecondaryItemsControl > Grid#LayoutRoot
+    styles:
+      - Background:=$Bar
+      - BorderBrush:=$Edge
+      - BorderThickness=1
+      - CornerRadius=10
+  - target: MenuFlyoutPresenter > Border
+    styles:
+      - Background:=$Bar
+      - BorderBrush:=$Edge
+      - BorderThickness=1
+      - CornerRadius=10

@@ -1,0 +1,20 @@
+# Lembas — File Operation Styler
+# Windhawk → File Operation Styler → Settings → "Textual mode" → paste everything → Save settings.
+# The copy / move window follows light and dark mode, with a gold progress ring.
+showCurrentFileProgressBar: 1
+hideSmallControlButtons: 0
+hideTitleBarPercentage: 0
+customization:
+  enabled: 1
+  preset: system
+  colors:
+    accentOverride: '#C9A04C'
+  style:
+    circleThickness: 6
+    progressThickness: 6
+  text:
+    fontPreset: default
+    customFont: ''
+    bodySize: 12
+    summarySize: 23
+    percentSize: 26
