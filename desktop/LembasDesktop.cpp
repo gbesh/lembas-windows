@@ -517,7 +517,10 @@ struct Shimmer : Element {
         arch->ComputeLength(nullptr, &len);
         for (int i = 0; i <= 256; i++) { D2D1_POINT_2F p; arch->ComputePointAtLength(len * i / 256, nullptr, &p, nullptr); pts.push_back(p); }
     }
-    float Offset(double t) { return t < 1 ? 0.f : 1.15f - 1.3f * Phase(t - 1, 8, 0); }
+    // The dash pattern repeats every 1.36 of the arch; moving exactly one repeat per loop makes
+    // the end of each loop meet the start of the next (the original moved 1.3, so the glint
+    // jumped forward by its own length where the straight side meets the curve).
+    float Offset(double t) { return t < 1 ? 0.f : 1.15f - 1.36f * Phase(t - 1, 8, 0); }
     D2D1_RECT_F Bounds(double t) override {
         float off = Offset(t);
         D2D1_RECT_F r = Empty();
