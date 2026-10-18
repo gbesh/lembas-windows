@@ -30,8 +30,7 @@ if (-not $Look) {
         $exe = Join-Path $Dest 'Living\LembasDesktop.exe'
         $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
         if (Test-Path $exe) {
-            & $exe --quit
-            Start-Sleep -Seconds 2
+            Start-Process $exe -ArgumentList '--quit' -Wait
             if ($config.livingDesktop) {
                 Set-ItemProperty -Path $runKey -Name 'Lembas Desktop' -Value "`"$exe`""
                 Start-Process $exe

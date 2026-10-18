@@ -14,7 +14,7 @@ Each look sets the wallpaper, lock screen, light/dark mode and accent colour, an
 **Lembas Desktop** brings the phone's home screen to the desktop: the look's scene moves gently behind your icons (twinkling stars and the real moon phase, drifting clouds and chimney smoke, a candle-lit map with a flickering campfire, a silver glint travelling the elven arch), with the time, the Shire date, the Quenya hour and the hobbit mealtime. It's a small native program written for Lembas (`desktop/LembasDesktop.cpp`: Direct2D, no browser, no other tools). It's built to be easy on the battery:
 
 - The still parts of each scene are pre-rendered, so it only redraws the few small things that move (usually under 5% of the screen).
-- It draws 24 frames a second on mains power and 15 on battery.
+- It draws 24 frames a second on mains power and 12 on battery.
 - It stops completely when windows cover the desktop, the screen is off or locked, Battery saver is on, or Windows' *Animation effects* are off. The clock still turns over each minute.
 
 Start > Lembas > Change look switches it, or just its clock, off.

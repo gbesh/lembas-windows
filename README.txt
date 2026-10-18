@@ -79,7 +79,7 @@ GOOD TO KNOW
  - On ARM PCs (Snapdragon), File Explorer's file list and sidebar stay plain black or white:
    the mod that tints them doesn't support ARM yet. Everything else works.
  - Lembas Desktop is easy on the battery. Only the small moving parts are redrawn, at 24 frames
-   a second on mains power and 15 on battery. It stops while windows cover the desktop, the
+   a second on mains power and 12 on battery. It stops while windows cover the desktop, the
    screen is off or locked, Battery saver is on, or Animation effects are off in Settings.
    Start > Lembas > Change look turns it (or just its clock) off. Each minute it logs its CPU use
    to desktop.log.

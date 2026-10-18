@@ -50,7 +50,7 @@ $samePlace = (Resolve-Path $Payload).Path.TrimEnd('\') -ieq $Dest.TrimEnd('\')
 # Lembas Desktop holds its files open while it runs: stop it for the copy (it's started again below)
 $desktopExe = Join-Path $Dest 'Living\LembasDesktop.exe'
 if (Get-Process LembasDesktop -ErrorAction SilentlyContinue) {
-    if (Test-Path $desktopExe) { & $desktopExe --quit; Start-Sleep -Seconds 2 }
+    if (Test-Path $desktopExe) { Start-Process $desktopExe -ArgumentList '--quit' -Wait }
     Get-Process LembasDesktop -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 }
 if (-not $samePlace) {

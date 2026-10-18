@@ -31,7 +31,7 @@ if (-not (Test-Path $Dest)) { Write-Host "  Lembas isn't installed." -Foreground
 
 Step "Lembas Desktop"
 $desktopExe = Join-Path $Dest 'Living\LembasDesktop.exe'
-if (Test-Path $desktopExe) { & $desktopExe --quit; Start-Sleep -Seconds 2 }
+if (Test-Path $desktopExe) { Start-Process $desktopExe -ArgumentList '--quit' -Wait }
 Get-Process LembasDesktop -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'Lembas Desktop' -ErrorAction SilentlyContinue
 

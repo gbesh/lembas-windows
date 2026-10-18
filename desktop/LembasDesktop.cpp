@@ -4,7 +4,7 @@
 // One small native program: Win32 + Direct3D 11 + Direct2D + DirectWrite, nothing else.
 // Battery: the still parts of each scene are pre-rendered images; only the small moving
 // pieces are redrawn, and only the parts of the screen they touch are presented (flip-model
-// dirty rectangles). It draws 24 frames a second on mains power, 15 on battery, and stops
+// dirty rectangles). It draws 24 frames a second on mains power, 12 on battery, and stops
 // completely when the desktop is covered, the screen is off or locked, Battery saver is on,
 // or Windows' "Animation effects" setting is off (the clock still turns over each minute).
 //
@@ -264,7 +264,9 @@ static void Solid(uint32_t rgb, float a) {
 // Everything is in the scenes' 1920x1080 artboard units. Each element knows where it is at time t
 // (for dirty rectangles) and how to draw itself.
 struct Element {
-    bool slow = false;        // updated 6 times a second instead of every frame
+    bool slow = false;        // gentle motion: updated `rate` times a second instead of every frame
+    float rate = 6;
+    double q = -1;            // the time this element was last drawn at (slow elements)
     bool still = false;       // never moves; drawn only when something around it changes
     int layer = -1;           // >= 0: one of the pre-rendered image layers
     D2D1_RECT_F last = { 0, 0, 0, 0 };
@@ -395,7 +397,8 @@ struct Candle : Element {
     Track tx{ {0, .33f, .66f, 1}, {-60, 50, -20, -60}, EASE_IN_OUT };
     Track ty{ {0, .33f, .66f, 1}, {-30, 20, 40, -30}, EASE_IN_OUT };
     Track sc{ {0, .33f, .66f, 1}, {1, 1.05f, .97f, 1}, EASE_IN_OUT };
-    Candle() { slow = true; }
+    // The glow drifts so little that no pixel changes by even one shade: keep it still and save the work
+    Candle() { still = true; }
     D2D1_RECT_F Bounds(double t) override {
         float p = Phase(t, 20, 0);
         return Circle(960 + tx(p), 470 + ty(p), 620 * sc(p) + 2);
@@ -591,7 +594,7 @@ struct ElvenMote : Element {
 struct Rays : Element {
     ComPtr<ID2D1PathGeometry> g;
     Rays() {
-        slow = true;
+        slow = true; rate = 3;
         std::string d;
         char b[96];
         for (int i = 0; i < 12; i++) {
@@ -829,7 +832,9 @@ static void LoadSettings() {
     gSet.enabled = !(JsonValue(j, L"livingDesktop", v) && v == L"false");
     gLatitude = gSet.lat;
 }
+static SceneId gForced = NONE;  // --look <name>: for testing one look
 static SceneId SceneFromWallpaper() {
+    if (gForced != NONE) return gForced;
     wchar_t wall[MAX_PATH * 2] = {};
     SystemParametersInfoW(SPI_GETDESKWALLPAPER, MAX_PATH * 2, wall, 0);
     std::wstring w = wall;
@@ -1284,7 +1289,6 @@ static void ReleaseDevice() {
 static long long gStatFrames = 0, gStatPixels = 0;  // for the once-a-minute power report
 static std::vector<RECT> gPrevDirty;   // what changed in the previous frame (the other buffer lacks it)
 static int gFullFrames = 2;            // full repaints still needed (one per buffer)
-static double gSlowT = -1;
 
 static RECT ToRect(const D2D1_RECT_F& r) {
     return { (LONG)std::floor(r.left), (LONG)std::floor(r.top), (LONG)std::ceil(r.right), (LONG)std::ceil(r.bottom) };
@@ -1306,21 +1310,21 @@ static void MergeRects(std::vector<RECT>& v) {
                 long long ai = (long long)(v[i].right - v[i].left) * (v[i].bottom - v[i].top);
                 long long aj = (long long)(v[j].right - v[j].left) * (v[j].bottom - v[j].top);
                 RECT x;
-                if (IntersectRect(&x, &v[i], &v[j]) || au <= (ai + aj) * 2 + 65536) {  // fewer, larger regions: cheaper for the CPU and driver
+                if (IntersectRect(&x, &v[i], &v[j]) || au - ai - aj <= 8192) {  // merge only when it wastes little: fewer draws, scattered stars stay small
                     v[i] = u; v.erase(v.begin() + j); merged = true;
                 }
             }
     }
 }
 
-static void DrawRegion(const RECT& R, double t, double ts) {
+static void DrawRegion(const RECT& R, double t) {
     gCtx->SetTransform(Matrix3x2F::Identity());  // the clip is in canvas pixels
     gCtx->PushAxisAlignedClip(RectF((float)R.left, (float)R.top, (float)R.right, (float)R.bottom), D2D1_ANTIALIAS_MODE_ALIASED);
     for (auto& m : gMons) {
         RECT x;
         if (!IntersectRect(&x, &R, &m.rc)) continue;
         for (auto* e : gScene->els) {
-            double et = e->slow ? ts : t;
+            double et = e->still ? 0 : e->slow ? e->q : t;  // still things always draw the same
             if (e->layer >= 0) {
                 auto& b = m.layer[e->layer];
                 if (!b) continue;
@@ -1344,24 +1348,22 @@ static void DrawRegion(const RECT& R, double t, double ts) {
 static bool Render(bool animate, bool clockChanged, const D2D1_RECT_F& oldClock) {
     if (!gSwap || !gScene) return true;
     double t = Now() - gT0;
-    double ts = gSlowT;
-    bool slowTick = false;
-    if (animate) {
-        double q = std::floor(t * 6) / 6;
-        if (q != gSlowT) { ts = gSlowT = q; slowTick = true; }
-    }
-    if (gSlowT < 0) ts = gSlowT = 0;
-
+    bool full = gFullFrames > 0;
     std::vector<RECT> cur;
+    std::vector<Element*> moved;
     for (auto* e : gScene->els) {
         if (e->layer >= 0) continue;
-        if (e->still) { if (IsEmpty(e->now)) e->now = e->Bounds(t); continue; }
-        if (!e->slow || slowTick || IsEmpty(e->now)) e->now = e->Bounds(e->slow ? ts : t);
+        if (e->still) { if (IsEmpty(e->now)) e->now = e->Bounds(0); continue; }
+        if (e->slow) {
+            double q = std::floor(t * e->rate) / e->rate;
+            if (e->q < 0 || ((animate || full) && q != e->q)) { e->q = q; e->now = e->Bounds(q); moved.push_back(e); }
+        } else if (animate || full || IsEmpty(e->now)) {
+            e->now = e->Bounds(t);
+            moved.push_back(e);
+        }
     }
     if (animate) {
-        for (auto* e : gScene->els) {
-            if (e->layer >= 0 || e->still) continue;
-            if (e->slow && !slowTick) continue;
+        for (auto* e : moved) {
             D2D1_RECT_F b = e->now;
             D2D1_RECT_F u = Union(b, e->last);
             e->last = b;
@@ -1377,7 +1379,7 @@ static bool Render(bool animate, bool clockChanged, const D2D1_RECT_F& oldClock)
         if (!IsEmpty(oldClock)) cur.push_back(Clip(ToRect(oldClock)));
         if (!IsEmpty(gClock.rc)) cur.push_back(Clip(ToRect(gClock.rc)));
     }
-    bool full = gFullFrames > 0;
+    if (full && !animate) for (auto* e : moved) e->last = e->now;  // drawn where they are now
     if (!full && cur.empty() && gPrevDirty.empty()) return true;
 
     std::vector<RECT> draw = cur;
@@ -1390,7 +1392,7 @@ static bool Render(bool animate, bool clockChanged, const D2D1_RECT_F& oldClock)
     gCtx->BeginDraw();
     gCtx->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
     if (full) gCtx->Clear(ColorF(0, 0, 0, 1));
-    for (auto& R : draw) DrawRegion(R, t, ts);
+    for (auto& R : draw) DrawRegion(R, t);
     HRESULT hr = gCtx->EndDraw();
     gCtx->SetTarget(nullptr);
     if (hr == D2DERR_RECREATE_TARGET) { Log(L"draw: recreate target"); return false; }
@@ -1531,7 +1533,7 @@ static void CheckConditions() {
     BOOL anim = TRUE;
     SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &anim, 0);
     gStill = saver || !anim;
-    gFps = battery ? 15 : 24;
+    gFps = battery ? 12 : 24;
 }
 static bool Visible() { return gAttached && gScene && !gLocked && !gDisplayOff && !gCovered; }
 
@@ -1611,8 +1613,8 @@ static int Snapshot(const std::wstring& dir, double t, int W, int H) {
         gCtx->SetTarget(target.Get());
         gCtx->BeginDraw();
         gCtx->Clear(ColorF(1, 0, 1));
-        for (auto* e : gScene->els) if (e->layer < 0) e->now = e->Bounds(t);
-        DrawRegion(RECT{ 0, 0, W, H }, t, t);
+        for (auto* e : gScene->els) if (e->layer < 0) { e->q = t; e->now = e->Bounds(t); }
+        DrawRegion(RECT{ 0, 0, W, H }, t);
         HRESULT hr = gCtx->EndDraw();
         gCtx->SetTarget(nullptr);
         Log(L"snapshot %s: draw 0x%08x, layers %d %d %d", kSceneKey[i], (unsigned)hr, (int)!!gMons[0].layer[0], (int)!!gMons[0].layer[1], (int)!!gMons[0].layer[2]);
@@ -1630,9 +1632,16 @@ static LONG WINAPI OnCrash(EXCEPTION_POINTERS* ep) {
 }
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int) {
-    if (cmd && wcsstr(cmd, L"--quit")) {
+    if (cmd && wcsstr(cmd, L"--quit")) {  // ask the running copy to stop, and wait until it has
         HWND other = FindWindowW(L"LembasDesktopMsg", nullptr);
-        if (other) PostMessageW(other, WM_CLOSE, 0, 0);
+        if (!other) return 0;
+        DWORD pid = 0; GetWindowThreadProcessId(other, &pid);
+        HANDLE p = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, FALSE, pid);
+        PostMessageW(other, WM_CLOSE, 0, 0);
+        if (p) {
+            if (WaitForSingleObject(p, 15000) == WAIT_TIMEOUT) TerminateProcess(p, 1);
+            CloseHandle(p);
+        }
         return 0;
     }
     bool snapshot = cmd && wcsstr(cmd, L"--snapshot");
@@ -1665,6 +1674,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int) {
         int W = argc > 4 ? _wtoi(argv[4]) : 1920, H = argc > 5 ? _wtoi(argv[5]) : 1200;
         return Snapshot(dir, t, W, H);
     }
+    for (int i = 0; i < 4; i++) if (cmd && wcsstr(cmd, (std::wstring(L"--look ") + kSceneKey[i]).c_str())) gForced = (SceneId)i;
     Log(L"Lembas Desktop starting (%s), pid %lu", gDir.c_str(), GetCurrentProcessId());
     SetUnhandledExceptionFilter(OnCrash);
 
