@@ -29,6 +29,12 @@ Write-Host ""
 Write-Host "  Removing Lembas" -ForegroundColor Yellow
 if (-not (Test-Path $Dest)) { Write-Host "  Lembas isn't installed." -ForegroundColor Gray; if (-not $NoPause) { Read-Host "  Press Enter to close" | Out-Null }; exit 0 }
 
+Step "Lembas Desktop"
+$desktopExe = Join-Path $Dest 'Living\LembasDesktop.exe'
+if (Test-Path $desktopExe) { & $desktopExe --quit; Start-Sleep -Seconds 2 }
+Get-Process LembasDesktop -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'Lembas Desktop' -ErrorAction SilentlyContinue
+
 Step "Windhawk mods and the Lembas Sun task (Windows will ask for permission)"
 $admin = Join-Path $Dest 'Tools\Lembas-Admin.ps1'
 if (Test-Path $admin) {

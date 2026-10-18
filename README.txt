@@ -40,6 +40,8 @@ UNINSTALL: one click
 WHAT CHANGES
 ----------------------------------------------------------------------
   Wallpaper and lock screen   a 4K scene for each look
+  Desktop (Lembas Desktop)    the scene moves gently behind your icons, with the time, the Shire
+                              date, the Quenya hour and the hobbit mealtime
   Light / dark mode           light by day, dark by night
   Accent colour               green, red, gold or silver with the look (selection, toggles, title bars)
   Taskbar                     tinted glass with a star-in-a-ring Start button
@@ -69,14 +71,19 @@ WHAT CHANGES
 GOOD TO KNOW
 ----------------------------------------------------------------------
  - Sunrise and sunset come from your time zone's main city. To use your own location, run
-   Install Lembas from a terminal with  -Latitude -33.9 -Longitude 151.2  (your numbers).
+   Install Lembas from a terminal with  -Latitude <yours> -Longitude <yours>.
  - The sun task checks every 10 minutes, at sign-in and when you unlock, and does nothing
    unless the look should change.
  - Windhawk 2 is an early (alpha) version; it updates itself. Each Lembas mod can be switched
    off in Windhawk if you don't want that part.
  - On ARM PCs (Snapdragon), File Explorer's file list and sidebar stay plain black or white:
    the mod that tints them doesn't support ARM yet. Everything else works.
- - Logs: %LOCALAPPDATA%\Lembas\install.log and sun.log.
+ - Lembas Desktop is easy on the battery. Only the small moving parts are redrawn, at 24 frames
+   a second on mains power and 15 on battery. It stops while windows cover the desktop, the
+   screen is off or locked, Battery saver is on, or Animation effects are off in Settings.
+   Start > Lembas > Change look turns it (or just its clock) off. Each minute it logs its CPU use
+   to desktop.log.
+ - Logs: %LOCALAPPDATA%\Lembas\install.log, sun.log and desktop.log.
 
 
 CREDITS

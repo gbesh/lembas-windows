@@ -87,6 +87,15 @@ function Test-Update {
 }
 if (-not $Look -and -not (Test-Path (Join-Path $Dest 'preview.json')) -and $config.PSObject.Properties['releaseApi']) { Test-Update }
 
+# Keep Lembas Desktop running (if it's switched on): it starts at sign-in, this covers a crash.
+# Started through Explorer so it runs as you, not as admin.
+$desktopExe = Join-Path $Dest 'Living\LembasDesktop.exe'
+if (-not ($config.PSObject.Properties['livingDesktop'] -and -not $config.livingDesktop) -and (Test-Path $desktopExe) -and
+    -not (Get-Process LembasDesktop -ErrorAction SilentlyContinue) -and (Get-Process explorer -ErrorAction SilentlyContinue)) {
+    Log "Starting Lembas Desktop"
+    Start-Process explorer.exe -ArgumentList "`"$desktopExe`""
+}
+
 $l = $looks.$phase
 $wallpaper = Join-Path $Dest ("Wallpapers\" + $l.wallpaper)
 $currentWall = (Get-ItemProperty 'HKCU:\Control Panel\Desktop' -ErrorAction SilentlyContinue).WallPaper

@@ -67,6 +67,9 @@ body{font-family:'Cormorant Garamond',Georgia,serif}
 .enter #clock > :nth-child(5){animation-delay:.46s}
 @keyframes up{from{opacity:0;transform:translateY(22px)}to{opacity:1;transform:none}}
 
+/* Layer renders for the native Lembas Desktop: Lb back, Lm middle, Lf front; Ln = drawn live by the app */
+body.lay-back .Lm,body.lay-back .Lf,body.lay-back .Ln,body.lay-mid .Lb,body.lay-mid .Lf,body.lay-mid .Ln,body.lay-front .Lb,body.lay-front .Lm,body.lay-front .Ln{display:none}
+body.lay-mid,body.lay-front,html.lay-clear{background:transparent}
 body.still *,body.noanim *{animation-play-state:paused !important}
 body.still .shoot,body.still .shim,body.still .wisp,body.still .mote,body.still .emote{display:none}
 @media (prefers-reduced-motion: reduce){*{animation-play-state:paused !important}}
@@ -143,13 +146,15 @@ var cfg = {
   clock: q.get('clock') !== '0',
   clockPos: 'default',
   anim: true,
-  lat: -33.87, lon: 151.21, // Sydney; change in Lively's settings
+  lat: -33.87, lon: 151.21, // only used for previews; the installer sets your own
   h24: false,
   meals: true
 };
 var STILL = q.has('still');
 var PREVIEW = q.has('preview') || document.documentElement.getAttribute('data-preview') === '1';
 if (STILL) document.body.classList.add('still');
+var LAYER = q.get('layer');   // back | mid | front: the still layers the Lembas Desktop app animates between
+if (LAYER) { document.body.classList.add('lay-' + LAYER); if (LAYER !== 'back') document.documentElement.classList.add('lay-clear'); }
 
 // ------------------------------------------------------------------ sun & schedule
 function sunDay(date) {
@@ -292,21 +297,21 @@ function starlit() {
     '<linearGradient id="mi" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#3A4A72" stop-opacity="0"/><stop offset=".6" stop-color="#3A4A72" stop-opacity=".4"/><stop offset="1" stop-color="#3A4A72" stop-opacity="0"/></linearGradient>' +
     '<linearGradient id="ft" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#05070F" stop-opacity="0"/><stop offset="1" stop-color="#05070F" stop-opacity=".85"/></linearGradient>' +
     '<linearGradient id="sh" x1="0" x2="1"><stop offset="0" stop-color="#FFF4D8" stop-opacity=".95"/><stop offset="1" stop-color="#FFF4D8" stop-opacity="0"/></linearGradient></defs>';
-  s += '<rect width="1920" height="1080" fill="url(#sk)"/>';
+  s += '<g class="Lb"><rect width="1920" height="1080" fill="url(#sk)"/>';
   var col = function () { var k = r(); return k < .12 ? '#FFE2B0' : k < .25 ? '#BFD4FF' : '#F4F1E8'; };
   s += '<g>';
   for (var i = 0; i < 300; i++) s += '<circle cx="' + f(r() * 1920) + '" cy="' + f(Math.pow(r(), 1.3) * 760) + '" r="' + f(.5 + Math.pow(r(), 3) * 1.4) + '" fill="' + col() + '" opacity="' + f(.25 + r() * .6) + '"/>';
-  s += '</g>';
+  s += '</g></g><g class="Ln">';
   for (i = 0; i < 70; i++) s += '<circle class="tw" cx="' + f(r() * 1920) + '" cy="' + f(Math.pow(r(), 1.3) * 720) + '" r="' + f(1 + Math.pow(r(), 3) * 2) + '" fill="' + col() + '" style="animation-duration:' + f(1.8 + r() * 3.4) + 's;animation-delay:-' + f(r() * 6) + 's"/>';
   for (i = 0; i < 10; i++) s += '<path class="sp" d="' + SPARK + '" transform="translate(' + f(60 + r() * 1800) + ',' + f(40 + r() * 600) + ')" fill="#FFF8E6" style="animation-duration:' + f(2.2 + r() * 2.5) + 's;animation-delay:-' + f(r() * 4) + 's;filter:drop-shadow(0 0 4px rgba(255,244,216,.9))"/>';
   s += '<g class="shoot"><rect x="1500" y="110" width="150" height="2" fill="url(#sh)" transform="rotate(-24 1500 110)"/></g>';
-  s += '<circle cx="300" cy="430" r="34" fill="url(#eg)"/><rect x="274" y="429" width="52" height="2" fill="url(#fl)"/><rect x="299" y="404" width="2" height="52" fill="url(#fv)"/><circle cx="300" cy="430" r="3" fill="#FFFBF0"/>';
-  s += '<circle class="moonglow" cx="1530" cy="250" r="160" fill="url(#mg)"/><circle cx="1530" cy="250" r="48" fill="#1C2235"/>' + moonPath(1530, 250, 48);
+  s += '</g><g class="Lb"><circle cx="300" cy="430" r="34" fill="url(#eg)"/><rect x="274" y="429" width="52" height="2" fill="url(#fl)"/><rect x="299" y="404" width="2" height="52" fill="url(#fv)"/><circle cx="300" cy="430" r="3" fill="#FFFBF0"/></g>';
+  s += '<g class="Ln"><circle class="moonglow" cx="1530" cy="250" r="160" fill="url(#mg)"/><circle cx="1530" cy="250" r="48" fill="#1C2235"/>' + moonPath(1530, 250, 48) + '</g>';
   var rr = rng(7);
-  s += '<path d="' + ridge(rr, 870, 230, 60, 150) + '" fill="#141B33"/>';
+  s += '<g class="Lf"><path d="' + ridge(rr, 870, 230, 60, 150) + '" fill="#141B33"/>';
   s += '<g class="mist"><rect x="-120" y="740" width="2160" height="240" fill="url(#mi)"/></g>';
   s += '<path d="' + ridge(rng(11), 985, 130, 50, 120) + '" fill="#0C111F"/>';
-  s += '<rect y="820" width="1920" height="260" fill="url(#ft)"/>';
+  s += '<rect y="820" width="1920" height="260" fill="url(#ft)"/></g>';
   return s;
 }
 
@@ -315,21 +320,21 @@ function redbook() {
   s += '<defs><radialGradient id="pa" cx=".5" cy=".42" r=".75"><stop offset="0" stop-color="#F3E8CD"/><stop offset=".6" stop-color="#EADBB8"/><stop offset="1" stop-color="#D9C59A"/></radialGradient>' +
     '<radialGradient id="cg"><stop offset="0" stop-color="#FFECBE" stop-opacity=".5"/><stop offset="1" stop-color="#FFECBE" stop-opacity="0"/></radialGradient>' +
     '<radialGradient id="fg"><stop offset="0" stop-color="#F2B65A" stop-opacity=".55"/><stop offset="1" stop-color="#F2B65A" stop-opacity="0"/></radialGradient></defs>';
-  s += '<rect width="1920" height="1080" fill="url(#pa)"/>';
+  s += '<g class="Lb"><rect width="1920" height="1080" fill="url(#pa)"/>';
   s += '<g>';
   for (var i = 0; i < 1100; i++) s += '<circle cx="' + f(r() * 1920) + '" cy="' + f(r() * 1080) + '" r="' + f(.5 + r() * 1.2) + '" fill="' + (r() < .5 ? '#7A5A34' : '#FFFBEF') + '" opacity="' + f(.04 + r() * .09) + '"/>';
-  s += '</g>';
-  s += '<circle class="candle" cx="960" cy="470" r="620" fill="url(#cg)"/>';
-  s += '<g fill="none" stroke="#8B6B43" stroke-width="1.6" opacity=".32">' +
+  s += '</g></g>';
+  s += '<circle class="Ln candle" cx="960" cy="470" r="620" fill="url(#cg)"/>';
+  s += '<g class="Lf"><g fill="none" stroke="#8B6B43" stroke-width="1.6" opacity=".32">' +
     '<path d="M-40,760 C300,690 560,800 900,740 S1500,680 1960,740"/><path d="M-40,800 C260,730 600,840 940,780 S1520,720 1960,780"/><path d="M-40,840 C340,780 640,880 980,820 S1560,760 1960,820"/>' +
     '<path d="M140,930 C260,860 440,890 470,940 S300,1030 200,1000 S90,960 140,930 Z"/><path d="M175,940 C250,895 380,912 400,945 S290,1005 225,985 S150,958 175,940 Z"/>' +
     '<path d="M1340,900 C1460,860 1620,890 1620,950 S1460,1010 1390,980 S1290,920 1340,900 Z"/>' +
     '<path d="M-40,200 C140,250 280,170 460,220"/><path d="M1460,180 C1600,140 1760,200 1960,150"/><path d="M-40,250 C160,300 300,220 480,270"/></g>';
   s += '<g fill="#5A4026" opacity=".35">';
   [[300, 840, 24], [330, 848, 28], [362, 840, 20], [1240, 820, 24], [1268, 828, 20], [560, 880, 18], [585, 886, 22]].forEach(function (m) { s += '<path d="M' + m[0] + ',' + m[1] + ' l' + m[2] / 2 + ',-' + m[2] + ' l' + m[2] / 2 + ',' + m[2] + ' z"/>'; });
-  s += '</g>';
+  s += '</g></g>';
   // campfire
-  s += '<g transform="translate(960,960) scale(2.4)"><ellipse class="fglow" cx="0" cy="-6" rx="40" ry="24" fill="url(#fg)"/>' +
+  s += '<g class="Ln" transform="translate(960,960) scale(2.4)"><ellipse class="fglow" cx="0" cy="-6" rx="40" ry="24" fill="url(#fg)"/>' +
     '<g fill="none" stroke="#6A5236" stroke-width=".9" stroke-linecap="round">' +
     '<g class="wisp" style="animation-delay:0s"><path d="M0,-18 C-5,-26 5,-34 0,-42 S-5,-58 0,-66"/></g>' +
     '<g class="wisp" style="animation-delay:-1.4s"><path d="M-3,-18 C-8,-26 2,-34 -3,-42 S-8,-58 -3,-66"/></g>' +
@@ -339,13 +344,13 @@ function redbook() {
     '<g stroke="#4A3420" stroke-width="2.2" stroke-linecap="round"><path d="M-14,6 L14,-3"/><path d="M-14,-3 L14,6"/></g>' +
     '<g fill="none" stroke="#6A5236" stroke-width=".9"><circle cx="-19" cy="5" r="3"/><circle cx="-12" cy="10" r="3.2"/><circle cx="-3" cy="12" r="3"/><circle cx="6" cy="12" r="3.2"/><circle cx="14" cy="9" r="3"/><circle cx="20" cy="4" r="2.8"/></g></g>';
   // motes
-  for (i = 0; i < 18; i++) s += '<circle class="mote" cx="' + f(200 + r() * 1520) + '" cy="' + f(500 + r() * 520) + '" r="2.4" fill="#B08A55" style="animation-duration:' + f(10 + r() * 9) + 's;animation-delay:-' + f(r() * 16) + 's"/>';
+  for (i = 0; i < 18; i++) s += '<circle class="Ln mote" cx="' + f(200 + r() * 1520) + '" cy="' + f(500 + r() * 520) + '" r="2.4" fill="#B08A55" style="animation-duration:' + f(10 + r() * 9) + 's;animation-delay:-' + f(r() * 16) + 's"/>';
   // compass rose
-  s += '<g opacity=".6"><circle cx="1760" cy="930" r="52" fill="none" stroke="#5A4026" stroke-width="1.4"/>' +
-    '<path d="M1700,930 L1760,922 L1820,930 L1760,938 Z" fill="#5A4026" opacity=".55"/>' +
-    '<g class="needle" style="transform-origin:1760px 930px"><path d="M1760,866 L1768,930 L1760,994 L1752,930 Z" fill="#5A4026"/><path d="M1760,866 L1768,930 L1752,930 Z" fill="#9A2A1C"/></g>' +
-    '<text x="1760" y="858" font-size="18" text-anchor="middle" fill="#9A2A1C" font-family="IM Fell English SC, serif">N</text></g>';
-  s += '<rect x="30" y="30" width="1860" height="1020" fill="none" stroke="#7A5A34" stroke-width="1.6" opacity=".5"/><rect x="40" y="40" width="1840" height="1000" fill="none" stroke="#7A5A34" stroke-width=".8" opacity=".5"/>';
+  s += '<g class="Lf" opacity=".6"><circle cx="1760" cy="930" r="52" fill="none" stroke="#5A4026" stroke-width="1.4"/>' +
+    '</g>' +
+    '<g class="Ln" opacity=".6"><path d="M1700,930 L1760,922 L1820,930 L1760,938 Z" fill="#5A4026" opacity=".55"/><g class="needle" style="transform-origin:1760px 930px"><path d="M1760,866 L1768,930 L1760,994 L1752,930 Z" fill="#5A4026"/><path d="M1760,866 L1768,930 L1752,930 Z" fill="#9A2A1C"/></g></g>' +
+    '<g class="Lf" opacity=".6"><text x="1760" y="858" font-size="18" text-anchor="middle" fill="#9A2A1C" font-family="IM Fell English SC, serif">N</text></g>';
+  s += '<g class="Lf"><rect x="30" y="30" width="1860" height="1020" fill="none" stroke="#7A5A34" stroke-width="1.6" opacity=".5"/><rect x="40" y="40" width="1840" height="1000" fill="none" stroke="#7A5A34" stroke-width=".8" opacity=".5"/></g>';
   return s;
 }
 
@@ -353,20 +358,20 @@ function elven() {
   var r = rng(1955), s = '';
   s += '<defs><linearGradient id="eb" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#0B0F12"/><stop offset=".7" stop-color="#11171B"/><stop offset="1" stop-color="#161D22"/></linearGradient>' +
     '<radialGradient id="eh"><stop offset="0" stop-color="#BFD8E6" stop-opacity=".45"/><stop offset="1" stop-color="#BFD8E6" stop-opacity="0"/></radialGradient></defs>';
-  s += '<rect width="1920" height="1080" fill="url(#eb)"/>';
+  s += '<g class="Lb"><rect width="1920" height="1080" fill="url(#eb)"/>';
   for (var i = 0; i < 90; i++) s += '<circle cx="' + f(r() * 1920) + '" cy="' + f(Math.pow(r(), 1.2) * 700) + '" r="' + f(.5 + r() * .9) + '" fill="#DCE6EA" opacity="' + f(.15 + r() * .35) + '"/>';
   var arch = 'M690,1010 L690,560 C690,390 820,250 960,150 C1100,250 1230,390 1230,560 L1230,1010';
-  s += '<path d="' + arch + '" fill="none" stroke="#B9C6CA" stroke-width="1.6" opacity=".75"/>';
-  s += '<path class="shim" pathLength="1" d="' + arch + '" fill="none" stroke="#F2FAFC" stroke-width="3" stroke-linecap="round" opacity=".9"/>';
-  s += '<path d="M712,1010 L712,563 C712,405 834,272 960,180 C1086,272 1208,405 1208,563 L1208,1010" fill="none" stroke="#B9C6CA" stroke-width=".9" opacity=".4"/>';
-  s += '<path d="M690,1010 H1230" stroke="#B9C6CA" stroke-width=".9" opacity=".4"/>';
-  s += '<circle class="halo" cx="960" cy="124" r="52" fill="url(#eh)"/>';
-  s += '<g transform="translate(960,124) scale(2)"><path d="M0,-12 L3,-3 L12,0 L3,3 L0,12 L-3,3 L-12,0 L-3,-3 Z" fill="#E8F0F2"/><path d="M-7,-7 L7,7 M-7,7 L7,-7" stroke="#E8F0F2" stroke-width=".6" opacity=".6"/></g>';
+  s += '<path d="' + arch + '" fill="none" stroke="#B9C6CA" stroke-width="1.6" opacity=".75"/></g>';
+  s += '<path class="Ln shim" pathLength="1" d="' + arch + '" fill="none" stroke="#F2FAFC" stroke-width="3" stroke-linecap="round" opacity=".9"/>';
+  s += '<g class="Lb"><path d="M712,1010 L712,563 C712,405 834,272 960,180 C1086,272 1208,405 1208,563 L1208,1010" fill="none" stroke="#B9C6CA" stroke-width=".9" opacity=".4"/>';
+  s += '<path d="M690,1010 H1230" stroke="#B9C6CA" stroke-width=".9" opacity=".4"/></g>';
+  s += '<circle class="Ln halo" cx="960" cy="124" r="52" fill="url(#eh)"/>';
+  s += '<g class="Ln" transform="translate(960,124) scale(2)"><path d="M0,-12 L3,-3 L12,0 L3,3 L0,12 L-3,3 L-12,0 L-3,-3 Z" fill="#E8F0F2"/><path d="M-7,-7 L7,7 M-7,7 L7,-7" stroke="#E8F0F2" stroke-width=".6" opacity=".6"/></g>';
   var leaf = '<g fill="none" stroke="#9FB2B8" stroke-width="1.6" opacity=".6" stroke-linecap="round"><path d="M0,0 C-28,-40 -24,-88 0,-120"/><path d="M-12,-24 C-36,-28 -48,-44 -44,-64 C-24,-60 -12,-44 -12,-24 Z"/><path d="M-8,-80 C12,-88 24,-104 20,-124 C0,-120 -8,-100 -8,-80 Z"/></g>';
-  s += '<g transform="translate(690,960)">' + leaf + '</g><g transform="translate(1230,960) scale(-1,1)">' + leaf + '</g>';
+  s += '<g class="Lb"><g transform="translate(690,960)">' + leaf + '</g><g transform="translate(1230,960) scale(-1,1)">' + leaf + '</g></g>';
   for (i = 0; i < 22; i++) {
     var x = f(720 + r() * 480), y = f(620 + r() * 380), t = f(9 + r() * 9), dl = f(r() * 16);
-    s += '<g class="emote" style="animation-duration:' + t + 's;animation-delay:-' + dl + 's"><circle cx="' + x + '" cy="' + y + '" r="6" fill="#C8E1EB" opacity=".22"/><circle cx="' + x + '" cy="' + y + '" r="2" fill="#DCEBF0"/></g>';
+    s += '<g class="Ln emote" style="animation-duration:' + t + 's;animation-delay:-' + dl + 's"><circle cx="' + x + '" cy="' + y + '" r="6" fill="#C8E1EB" opacity=".22"/><circle cx="' + x + '" cy="' + y + '" r="2" fill="#DCEBF0"/></g>';
   }
   return s;
 }
@@ -375,7 +380,7 @@ function shire() {
   var s = '';
   s += '<defs><linearGradient id="ss" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#DCEBEA"/><stop offset=".42" stop-color="#EEF2E2"/><stop offset=".7" stop-color="#FBF1DA"/><stop offset="1" stop-color="#F7E6C4"/></linearGradient>' +
     '<radialGradient id="su"><stop offset="0" stop-color="#FFF6D6"/><stop offset=".45" stop-color="#FFE9A8" stop-opacity=".55"/><stop offset="1" stop-color="#FFE9A8" stop-opacity="0"/></radialGradient></defs>';
-  s += '<rect width="1920" height="1080" fill="url(#ss)"/>';
+  s += '<rect class="Lb" width="1920" height="1080" fill="url(#ss)"/><g class="Ln">';
   s += '<g class="rays" opacity=".2" stroke="#F2C969" stroke-width="18" stroke-linecap="round">';
   for (var i = 0; i < 12; i++) { var a = i * Math.PI / 6; s += '<path d="M' + f(1560 + 150 * Math.cos(a)) + ',' + f(250 + 150 * Math.sin(a)) + ' L' + f(1560 + 200 * Math.cos(a)) + ',' + f(250 + 200 * Math.sin(a)) + '"/>'; }
   s += '</g><circle cx="1560" cy="250" r="240" fill="url(#su)"/><circle cx="1560" cy="250" r="78" fill="#FFF3C9"/>';
@@ -383,19 +388,19 @@ function shire() {
     return '<g class="cloud" style="animation-duration:' + dur + 's;animation-delay:-' + dl + 's"><g transform="translate(0,' + y + ') scale(' + sc + ')" fill="#fff" opacity="' + op + '"><rect x="14" y="22" width="90" height="12" rx="6"/><circle cx="30" cy="22" r="12"/><circle cx="60" cy="20" r="17"/><circle cx="90" cy="23" r="12"/></g></g>';
   };
   s += cloud(500, 2.4, 90, 20, .85) + cloud(560, 1.6, 120, 70, .75) + cloud(70, 1.5, 150, 110, .65) + cloud(530, 1.2, 170, 30, .6);
-  s += '<path d="M0,690 C380,600 760,600 1160,650 C1480,690 1720,620 1920,590 V1080 H0 Z" fill="#B9CF98"/>';
+  s += '</g><g class="Lm"><path d="M0,690 C380,600 760,600 1160,650 C1480,690 1720,620 1920,590 V1080 H0 Z" fill="#B9CF98"/>';
   s += '<path d="M0,780 C260,680 560,650 860,720 C1120,780 1500,790 1920,740 V1080 H0 Z" fill="#94B373"/>';
-  s += '<g class="tree"><path d="M426,640 L430,720 M430,694 L410,676 M430,684 L450,664" stroke="#5B4A33" stroke-width="6" fill="none" stroke-linecap="round"/>' +
+  s += '</g><g class="Ln"><g class="tree"><path d="M426,640 L430,720 M430,694 L410,676 M430,684 L450,664" stroke="#5B4A33" stroke-width="6" fill="none" stroke-linecap="round"/>' +
     '<circle cx="430" cy="614" r="52" fill="#6F954F"/><circle cx="394" cy="638" r="32" fill="#6F954F"/><circle cx="466" cy="634" r="36" fill="#6F954F"/><circle cx="438" cy="594" r="32" fill="#7EA35C"/></g>';
   s += '<rect x="1240" y="752" width="26" height="80" rx="3" fill="#7A6247"/><rect x="1236" y="748" width="34" height="9" rx="2" fill="#6A533B"/>';
   for (i = 0; i < 3; i++) s += '<circle class="smoke" cx="1253" cy="738" r="12" fill="#fff" style="animation-delay:-' + (i * 1.5) + 's"/>';
-  s += '<path d="M0,900 C400,820 820,790 1180,805 C1480,818 1720,860 1920,900 V1080 H0 Z" fill="#6E9752"/>';
+  s += '</g><g class="Lf"><path d="M0,900 C400,820 820,790 1180,805 C1480,818 1720,860 1920,900 V1080 H0 Z" fill="#6E9752"/>';
   s += '<circle cx="1180" cy="905" r="76" fill="#C9B48A"/><circle cx="1180" cy="905" r="62" fill="#2E5E3A"/>' +
     '<path d="M1118,905 H1242 M1180,843 V967" stroke="#244D2F" stroke-width="2.4" opacity=".6"/><circle cx="1180" cy="905" r="7" fill="#E2B64A"/>' +
     '<circle cx="1040" cy="880" r="27" fill="#C9B48A"/><circle cx="1040" cy="880" r="20" fill="#FCE9B6"/><path d="M1020,880 H1060 M1040,860 V900" stroke="#C9B48A" stroke-width="3"/>' +
     '<path d="M880,1010 C960,970 1060,962 1180,960" stroke="#D9C59A" stroke-width="22" fill="none" stroke-linecap="round" opacity=".8"/>';
   s += '<g fill="#E58C6B"><circle cx="930" cy="950" r="6"/><circle cx="1330" cy="930" r="6"/><circle cx="1360" cy="945" r="5"/><circle cx="560" cy="880" r="5"/></g><g fill="#F2D06B"><circle cx="905" cy="962" r="5"/><circle cx="1310" cy="948" r="5"/><circle cx="600" cy="890" r="5"/></g>';
-  s += '<rect y="1010" width="1920" height="70" fill="#5E8645"/>';
+  s += '<rect y="1010" width="1920" height="70" fill="#5E8645"/></g>';
   return s;
 }
 

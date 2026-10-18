@@ -1,7 +1,8 @@
 <#
   Lembas for Windows - one-click install (and repair, and update: running it again is always safe).
 
-  As you:   fonts, cursors, sounds, icons, Terminal colours, Start-menu shortcuts.
+  As you:   fonts, cursors, sounds, icons, Terminal colours, Start-menu shortcuts, and Lembas Desktop
+            (the gently animated scene and clock behind your desktop icons).
   As admin: Windhawk (installed or upgraded silently) with every Lembas mod and style, and the
             "Lembas Sun" task that switches between the four looks through the day.
   Windows asks for admin permission once. Everything is backed up first; "Uninstall Lembas"
@@ -46,6 +47,12 @@ public static extern void SHChangeNotify(int eventId, uint flags, IntPtr item1, 
 # ------------------------------------------------------------------ 1. files
 $legacy = (Test-Path (Join-Path $Dest 'backup.json')) -and -not (Test-Path (Join-Path $Dest 'lembas.json'))   # Lembas 1 is here
 $samePlace = (Resolve-Path $Payload).Path.TrimEnd('\') -ieq $Dest.TrimEnd('\')
+# Lembas Desktop holds its files open while it runs: stop it for the copy (it's started again below)
+$desktopExe = Join-Path $Dest 'Living\LembasDesktop.exe'
+if (Get-Process LembasDesktop -ErrorAction SilentlyContinue) {
+    if (Test-Path $desktopExe) { & $desktopExe --quit; Start-Sleep -Seconds 2 }
+    Get-Process LembasDesktop -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+}
 if (-not $samePlace) {
     Step "Copying Lembas to $Dest"
     New-Item -ItemType Directory -Path $Dest -Force | Out-Null
@@ -288,6 +295,24 @@ foreach ($s in @(
     $lnk.IconLocation = Join-Path $Dest $s.icon
     $lnk.WorkingDirectory = $Dest
     $lnk.Save()
+}
+
+# ------------------------------------------------------------------ 9b. Lembas Desktop
+if (-not $config.PSObject.Properties['livingDesktop']) { $config | Add-Member -NotePropertyName livingDesktop -NotePropertyValue $true }
+if (-not $config.PSObject.Properties['desktopClock']) { $config | Add-Member -NotePropertyName desktopClock -NotePropertyValue $true }
+$config | ConvertTo-Json | Set-Content -Path $configFile -Encoding UTF8
+$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$isArm = ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') -or ($env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') -or
+         ((Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1).Architecture -eq 12)
+$exeBuild = Join-Path $Dest ('Living\LembasDesktop-' + $(if ($isArm) { 'arm64' } else { 'x64' }) + '.exe')
+if ($config.livingDesktop -and (Test-Path $exeBuild)) {
+    Step "Lembas Desktop: the scene, gently moving, with the time and the Shire date behind your icons"
+    Copy-Item $exeBuild $desktopExe -Force
+    Set-ItemProperty -Path $runKey -Name 'Lembas Desktop' -Value "`"$desktopExe`""
+    # Start it as you (not as admin, even when an automatic update runs elevated)
+    Start-Process explorer.exe -ArgumentList "`"$desktopExe`""
+} else {
+    Remove-ItemProperty -Path $runKey -Name 'Lembas Desktop' -ErrorAction SilentlyContinue
 }
 
 # ------------------------------------------------------------------ 10. the admin part: Windhawk, its mods, the sun task

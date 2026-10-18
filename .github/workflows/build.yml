@@ -54,6 +54,21 @@ jobs:
           get OFL-Fraunces.txt             "$base/fraunces/OFL.txt"
           get OFL-AlegreyaSans.txt         "$base/alegreyasans/OFL.txt"
 
+      - name: Lembas Desktop (native app, cross-compiled for ARM64 and x64)
+        run: |
+          v=20250613
+          curl -fsSL -o /tmp/llvm-mingw.tar.xz "https://github.com/mstorsjo/llvm-mingw/releases/download/$v/llvm-mingw-$v-ucrt-ubuntu-22.04-x86_64.tar.xz"
+          mkdir -p /tmp/llvm-mingw && tar -xf /tmp/llvm-mingw.tar.xz -C /tmp/llvm-mingw --strip-components=1
+          mkdir -p assets/desktop
+          for pair in aarch64:arm64 x86_64:x64; do
+            t=${pair%%:*}; n=${pair##*:}
+            /tmp/llvm-mingw/bin/$t-w64-mingw32-clang++ -std=c++17 -O2 -municode -mwindows -static -Wall -Wno-missing-braces \
+              -o assets/desktop/LembasDesktop-$n.exe desktop/LembasDesktop.cpp \
+              -ld2d1 -ldwrite -ld3d11 -ldxgi -lwindowscodecs -ldwmapi -lwtsapi32 -lole32 -luuid -lshell32
+            /tmp/llvm-mingw/bin/llvm-strip assets/desktop/LembasDesktop-$n.exe
+          done
+          ls -la assets/desktop
+
       - name: Wallpapers, cursors, sounds
         run: |
           python tools/render_wallpapers.py assets/wall4k

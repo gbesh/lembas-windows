@@ -1,7 +1,7 @@
 """Assemble "Lembas for Windows" from the repo + rendered assets.
 
 Usage: python build_kit.py <assets_dir> <out_dir>
-  assets_dir must contain: wall4k/*.jpg, cursors/, sounds/, fonts/, icons/  (made by the other scripts)
+  assets_dir must contain: wall4k/*.jpg, wall4k/living/, desktop/*.exe, cursors/, sounds/, fonts/, icons/  (made by the other scripts)
 """
 import json
 import os
@@ -141,7 +141,12 @@ def main(assets, out):
     pay.mkdir(parents=True)
 
     # Wallpapers
-    shutil.copytree(assets / "wall4k", pay / "Wallpapers")
+    shutil.copytree(assets / "wall4k", pay / "Wallpapers", ignore=shutil.ignore_patterns("living"))
+    # Lembas Desktop: the living-desktop app (ARM64 and x64 builds) and the still scene layers it animates over
+    live = pay / "Living"
+    shutil.copytree(assets / "wall4k" / "living", live)
+    for exe in sorted((assets / "desktop").glob("LembasDesktop-*.exe")):
+        shutil.copy2(exe, live / exe.name)
     # Cursors, sounds, fonts
     shutil.copytree(assets / "cursors", pay / "Cursors", ignore=shutil.ignore_patterns("preview.png"))
     shutil.copytree(assets / "sounds", pay / "Sounds")
