@@ -21,8 +21,17 @@ public static extern IntPtr SendMessageTimeoutString(IntPtr hwnd, uint msg, UInt
 
 function Step($text) { Write-Host ("  * " + $text) -ForegroundColor DarkYellow }
 function Restore($path, $name, $value, $type = 'String') {
-    if ($null -eq $value) { Remove-ItemProperty -Path $path -Name $name -ErrorAction SilentlyContinue }
-    else { Set-ItemProperty -Path $path -Name $name -Value $value -Type $type }
+    try {
+        if ($null -eq $value) { Remove-ItemProperty -Path $path -Name $name -ErrorAction SilentlyContinue; return }
+        if ($type -eq 'DWord') {
+            # colours are saved as 0..4294967295; the registry wants a signed 32-bit number
+            $n = [int64]$value
+            if ($n -gt [int32]::MaxValue) { $n -= 4294967296 }
+            $value = [int32]$n
+        }
+        if (-not (Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
+        Set-ItemProperty -Path $path -Name $name -Value $value -Type $type -ErrorAction Stop
+    } catch { Write-Host "    Couldn't put back $name ($($_.Exception.Message))" -ForegroundColor DarkGray }
 }
 
 Write-Host ""
@@ -94,7 +103,17 @@ if (Test-Path $accentBackup) {
     $accentKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Accent'
     $dwmKey = 'HKCU:\Software\Microsoft\Windows\DWM'
     Restore 'HKCU:\Control Panel\Desktop' 'AutoColorization' $ab.AutoColorization 'DWord'
-    if ($ab.AccentPalette) { Set-ItemProperty -Path $accentKey -Name 'AccentPalette' -Value ([Convert]::FromBase64String($ab.AccentPalette)) -Type Binary }
+    # Saved as base64 text (older installs saved the raw numbers, sometimes with the text after them)
+    $pal = $null
+    foreach ($item in @($ab.AccentPalette)) { if ($item -is [string]) { try { $pal = [Convert]::FromBase64String($item) } catch { } } }
+    if (-not $pal) {
+        $nums = @(@($ab.AccentPalette) | Where-Object { $_ -isnot [string] })
+        if ($nums.Count -ge 32) { $pal = [byte[]]($nums[0..31]) }
+    }
+    if ($pal) {
+        try { Set-ItemProperty -Path $accentKey -Name 'AccentPalette' -Value $pal -Type Binary -ErrorAction Stop }
+        catch { Write-Host "    Couldn't put back the accent palette; Windows picks a new one from your next colour change." -ForegroundColor DarkGray }
+    }
     Restore $accentKey 'AccentColorMenu' $ab.AccentColorMenu 'DWord'
     Restore $accentKey 'StartColorMenu' $ab.StartColorMenu 'DWord'
     Restore $dwmKey 'AccentColor' $ab.AccentColor 'DWord'
@@ -142,6 +161,7 @@ foreach ($p in $props) {
 }
 
 Step "Files in $Dest"
+Set-Location $env:USERPROFILE   # the Start-menu shortcut started us inside the Lembas folder
 Remove-Item $Dest -Recurse -Force -ErrorAction SilentlyContinue
 if (Test-Path $Dest) { Write-Host "    Some files are still in use; they'll go after a restart, or delete $Dest yourself." -ForegroundColor DarkGray }
 

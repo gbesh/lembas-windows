@@ -119,9 +119,11 @@ if (-not (Test-Path $backupFile)) {
 $accentBackup = Join-Path $Dest 'backup-accent.json'
 if (-not (Test-Path $accentBackup)) {
     $v = Get-Value $accentKey 'AccentPalette'
+    $palText = $null
+    if ($v) { $palText = [string][Convert]::ToBase64String([byte[]]$v) }   # one plain string
     [ordered]@{
         AutoColorization = Get-Value 'HKCU:\Control Panel\Desktop' 'AutoColorization'
-        AccentPalette = $(if ($v) { [Convert]::ToBase64String([byte[]]$v) } else { $null })
+        AccentPalette = $palText
         AccentColorMenu = Get-Value $accentKey 'AccentColorMenu'; StartColorMenu = Get-Value $accentKey 'StartColorMenu'
         AccentColor = Get-Value $dwmKey 'AccentColor'; ColorizationColor = Get-Value $dwmKey 'ColorizationColor'
         ColorizationAfterglow = Get-Value $dwmKey 'ColorizationAfterglow'
