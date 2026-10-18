@@ -266,7 +266,8 @@ static void Solid(uint32_t rgb, float a) {
 struct Element {
     bool slow = false;        // gentle motion: updated `rate` times a second instead of every frame
     float rate = 6;
-    double q = -1;            // the time this element was last drawn at (slow elements)
+    bool smooth = false;      // fast mover: updated 2.5x the frame rate so it glides instead of jumping
+    double q = -1;            // the time this element was last drawn at
     bool still = false;       // never moves; drawn only when something around it changes
     int layer = -1;           // >= 0: one of the pre-rendered image layers
     D2D1_RECT_F last = { 0, 0, 0, 0 };
@@ -321,6 +322,7 @@ struct Shooting : Element {
     Track tx{ {0, .86f, .96f, 1}, {0, 0, -560, 0}, LINEAR };
     Track ty{ {0, .86f, .96f, 1}, {0, 0, 250, 0}, LINEAR };
     Shooting() {
+        smooth = true;
         D2D1_GRADIENT_STOP st[2] = { {0, Hex(0xFFF4D8, .95f)}, {1, Hex(0xFFF4D8, 0)} };
         ComPtr<ID2D1GradientStopCollection> c;
         gCtx->CreateGradientStopCollection(st, 2, &c);
@@ -511,6 +513,7 @@ struct Shimmer : Element {
     float len = 1;
     std::vector<D2D1_POINT_2F> pts;  // 257 points along the arch, so the bounds need no geometry maths per frame
     Shimmer() {
+        smooth = true;
         arch->ComputeLength(nullptr, &len);
         for (int i = 0; i <= 256; i++) { D2D1_POINT_2F p; arch->ComputePointAtLength(len * i / 256, nullptr, &p, nullptr); pts.push_back(p); }
     }
@@ -1286,6 +1289,7 @@ static void ReleaseDevice() {
 }
 
 // ------------------------------------------------------------------------------------ rendering
+static int gFps = 24;  // frames a second (24 on mains power, 12 on battery)
 static long long gStatFrames = 0, gStatPixels = 0;  // for the once-a-minute power report
 static std::vector<RECT> gPrevDirty;   // what changed in the previous frame (the other buffer lacks it)
 static int gFullFrames = 2;            // full repaints still needed (one per buffer)
@@ -1324,7 +1328,7 @@ static void DrawRegion(const RECT& R, double t) {
         RECT x;
         if (!IntersectRect(&x, &R, &m.rc)) continue;
         for (auto* e : gScene->els) {
-            double et = e->still ? 0 : e->slow ? e->q : t;  // still things always draw the same
+            double et = e->still ? 0 : e->q;  // each piece is drawn at the time it was last updated
             if (e->layer >= 0) {
                 auto& b = m.layer[e->layer];
                 if (!b) continue;
@@ -1354,13 +1358,9 @@ static bool Render(bool animate, bool clockChanged, const D2D1_RECT_F& oldClock)
     for (auto* e : gScene->els) {
         if (e->layer >= 0) continue;
         if (e->still) { if (IsEmpty(e->now)) e->now = e->Bounds(0); continue; }
-        if (e->slow) {
-            double q = std::floor(t * e->rate) / e->rate;
-            if (e->q < 0 || ((animate || full) && q != e->q)) { e->q = q; e->now = e->Bounds(q); moved.push_back(e); }
-        } else if (animate || full || IsEmpty(e->now)) {
-            e->now = e->Bounds(t);
-            moved.push_back(e);
-        }
+        double r = e->slow ? e->rate : e->smooth ? gFps * 2.5 : gFps;
+        double q = std::floor(t * r) / r;
+        if (e->q < 0 || ((animate || full) && q != e->q)) { e->q = q; e->now = e->Bounds(q); moved.push_back(e); }
     }
     if (animate) {
         for (auto* e : moved) {
@@ -1380,7 +1380,7 @@ static bool Render(bool animate, bool clockChanged, const D2D1_RECT_F& oldClock)
         if (!IsEmpty(gClock.rc)) cur.push_back(Clip(ToRect(gClock.rc)));
     }
     if (full && !animate) for (auto* e : moved) e->last = e->now;  // drawn where they are now
-    if (!full && cur.empty() && gPrevDirty.empty()) return true;
+    if (!full && cur.empty()) return true;  // nothing moved this tick: no drawing, no present
 
     std::vector<RECT> draw = cur;
     if (!full) draw.insert(draw.end(), gPrevDirty.begin(), gPrevDirty.end());
@@ -1501,7 +1501,6 @@ static void Stop() {
 
 // ------------------------------------------------------------------------------------ when to move
 static bool gLocked = false, gDisplayOff = false, gCovered = false, gStill = false;
-static int gFps = 24;
 
 static BOOL CALLBACK CoverEnum(HWND h, LPARAM lp) {
     auto* covered = (std::vector<bool>*)lp;
@@ -1755,7 +1754,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int) {
             }
             if (clockChanged || gFullFrames > 0 || (animate && now >= nextFrame)) {
                 if (!Render(animate, clockChanged, oldClock)) { ReleaseDevice(); gAttached = false; gReattach = true; Detach(); continue; }
-                double period = 1.0 / gFps;
+                bool smooth = false;
+                for (auto* e : gScene->els) smooth |= e->smooth;
+                double period = 1.0 / (smooth ? gFps * 2.5 : gFps);
                 nextFrame = std::max(nextFrame + period, now + period * .5);
                 if (nextFrame < now) nextFrame = now + period;
             }
