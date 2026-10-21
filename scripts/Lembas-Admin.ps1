@@ -60,10 +60,13 @@ Write-Host ""
 
 if ($Mode -eq 'Install') {
     # ---------------------------------------------------------- Windhawk 2.0 (it has the command line Lembas uses)
-    $major = if (Test-Path $cli) { 2 } else { Windhawk-Major }
-    if ($major -lt 2) {
-        if ($major -eq 0) { Set-StateValue 'windhawkByLembas' $true }
-        elseif ($Legacy) { Set-StateValue 'windhawkByLembas' $true }   # Lembas 1 installed it
+    # Install whenever the command line is missing: a half-removed Windhawk can leave windhawk.exe behind
+    $registered = [bool](Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+                         Where-Object { $_.DisplayName -like 'Windhawk*' })
+    if (-not (Test-Path $cli)) {
+        $major = Windhawk-Major
+        if ($major -eq 0 -or -not $registered) { Set-StateValue 'windhawkByLembas' $true }   # nothing (or only leftovers) was there
+        elseif ($major -lt 2 -and $Legacy) { Set-StateValue 'windhawkByLembas' $true }       # Lembas 1 installed it
         Log "Installing Windhawk 2.0 (silently)..."
         try {
             [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -138,7 +141,16 @@ if ($Mode -eq 'Uninstall') {
         $left = Installed-Mods | Where-Object { $_ -notin $ours }
         if ($state.windhawkByLembas -and -not $left) {
             $un = Join-Path $whDir 'uninstall.exe'
-            if (Test-Path $un) { Log "Removing Windhawk (Lembas installed it)"; Start-Process $un -ArgumentList '/S' -Wait }
+            if (Test-Path $un) {
+                Log "Removing Windhawk (Lembas installed it)"
+                # Stop it first so nothing stays locked, run the uninstaller in place so we really wait
+                # for it, then clear anything left behind (a leftover windhawk.exe fooled the next install)
+                Get-Process windhawk* -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+                Get-Service -Name 'Windhawk*' -ErrorAction SilentlyContinue | Stop-Service -Force -ErrorAction SilentlyContinue
+                Start-Process $un -ArgumentList @('/S', "_?=$whDir") -Wait
+                Start-Sleep -Seconds 1
+                Remove-Item $whDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
         } elseif ($left) {
             Log "Keeping Windhawk: you have other mods in it."
         }
