@@ -17,7 +17,7 @@ The looks change at the same minute as the Lembas phone launcher and watch face 
 - It draws 24 frames a second on mains power and 12 on battery.
 - It stops completely when windows cover the desktop, the screen is off or locked, Battery saver is on, or Windows' *Animation effects* are off. The clock still turns over each minute.
 
-Start > Lembas > Change look switches it, or just its clock, off.
+The **Lembas icon by the clock** (in the system tray) changes the look, the desktop clock (**Modern**, in the same type as the phone launcher and watch face; **Classic**; or off), the moving scene and the mealtimes, and has Preview, Check for updates and Uninstall. Start > Lembas > Change look does the same from a menu.
 
 ## Install: one click
 

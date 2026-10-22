@@ -74,6 +74,11 @@ GOOD TO KNOW
    sums as the Lembas phone launcher and watch, so all three change look at the same minute).
    If you change time zone, Lembas follows. To use your own location instead, run Install
    Lembas from a terminal with  -Latitude <yours> -Longitude <yours>.
+ - The Lembas icon by the clock (bottom right; it may be under the ^ arrow) changes the look,
+   the desktop clock (Modern, Classic or off), the moving scene and the mealtimes, and has
+   Preview, Check for updates and Uninstall.
+ - The desktop clock's Modern style uses the same type as the phone launcher and the watch face:
+   the hours heavy in the look's colour over the minutes, with the date and the Shire date.
  - Lembas Desktop starts the sun task at the exact minute a look changes. The task also checks
    every 10 minutes, at sign-in and when you unlock, and does nothing unless the look should
    change.

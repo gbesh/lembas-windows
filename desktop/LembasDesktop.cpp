@@ -798,7 +798,7 @@ static void ReleaseShared() {
 }
 
 // ------------------------------------------------------------------------------------ settings
-struct Settings { bool clock = true, meals = true, enabled = true, adaptive = true; double lat = -33.87, lon = 151.21; } gSet;
+struct Settings { bool clock = true, meals = true, enabled = true, adaptive = true, modern = true; double lat = -33.87, lon = 151.21; std::wstring look = L"adaptive"; } gSet;
 
 static std::wstring ReadAll(const std::wstring& path) {
     HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
@@ -835,6 +835,10 @@ static void LoadSettings() {
     if (JsonValue(j, L"latitude", v)) gSet.lat = _wtof(v.c_str());
     if (JsonValue(j, L"longitude", v)) gSet.lon = _wtof(v.c_str());
     gSet.adaptive = !JsonValue(j, L"look", v) || v.find(L"adaptive") != std::wstring::npos;
+    gSet.look = L"adaptive";
+    if (JsonValue(j, L"look", v)) for (auto* k : { L"shire", L"redbook", L"starlit", L"elven" }) if (v.find(k) != std::wstring::npos) gSet.look = k;
+    // the clock in the watch face's type (stacked heavy hours and light minutes), unless set to classic
+    gSet.modern = !(JsonValue(j, L"desktopClockStyle", v) && v.find(L"classic") != std::wstring::npos);
     gSet.clock = !(JsonValue(j, L"desktopClock", v) && v == L"false");
     gSet.meals = !(JsonValue(j, L"meals", v) && v == L"false");
     gSet.enabled = !(JsonValue(j, L"livingDesktop", v) && v == L"false");
@@ -1143,7 +1147,34 @@ static void BuildClock(SceneId sc) {
     uint32_t firstColor = 0;
     std::wstring ampm;
 
-    if (sc == REDBOOK) {
+    if (gSet.modern) {
+        // The watch face's type: the date and the Shire date, then the hours (heavy, in the look's
+        // colour) over the minutes (light), then the mealtime.
+        static const uint32_t hoursC[] = { 0x3E6B2E, 0x9A2A1C, 0xE9CC88, 0xC6DDE8 };
+        static const uint32_t textC[] = { 0x2F4A2A, 0x2B1E12, 0xF3EBD6, 0xE6ECEE };
+        static const uint32_t loreC[] = { 0x6A7D4E, 0x9A2A1C, 0xD9BC7A, 0xC4D2D6 };
+        int k = sc == SHIRE ? 0 : sc == REDBOOK ? 1 : sc == STARLIT ? 2 : 3;
+        wchar_t hb[8], mb[8];
+        std::swprintf(hb, 8, L"%02d", h24 ? h : ((h % 12) ? h % 12 : 12));
+        std::swprintf(mb, 8, L"%02d", st.wMinute);
+        L.assign(6, Line());
+        Line &d = L[0], &s2 = L[1], &hh = L[2], &mm = L[3], &me = L[4];
+        L.pop_back();
+        d.family = alegreya; d.weight = DWRITE_FONT_WEIGHT_MEDIUM; d.size = 2.2f; d.spacing = .02f; d.color = textC[k];
+        d.text = DateFmt(st, L"ddd d MMM");
+        s2.family = fraunces; s2.style = DWRITE_FONT_STYLE_ITALIC; s2.size = 2.4f; s2.color = loreC[k];
+        s2.text = wd + L" · " + shireTxt;
+        hh.family = fraunces; hh.weight = DWRITE_FONT_WEIGHT_EXTRA_BOLD; hh.size = 19; hh.time = true; hh.color = hoursC[k]; hh.margin = 1.2f;
+        hh.text = hb;
+        mm.family = fraunces; mm.weight = DWRITE_FONT_WEIGHT_LIGHT; mm.size = 19; mm.time = true; mm.color = textC[k]; mm.margin = -2.2f;
+        mm.text = mb;
+        me.family = fraunces; me.style = DWRITE_FONT_STYLE_ITALIC; me.size = 2.2f; me.color = loreC[k]; me.margin = 1.4f;
+        me.text = meal;
+        top = sc == ELVEN ? 26 : 14;   // under the elven arch's star
+        shadow = sc == STARLIT || sc == ELVEN;
+        time = L"";   // no am/pm suffix
+        if (me.text.empty()) L.pop_back();
+    } else if (sc == REDBOOK) {
         for (auto& l : L) l.family = fell;
         lab.family = fellsc; lab.size = 2.2f; lab.spacing = .24f; lab.color = 0x9A2A1C;
         tim.weight = DWRITE_FONT_WEIGHT_NORMAL; tim.size = 16; firstColor = 0x9A2A1C;
@@ -1180,7 +1211,7 @@ static void BuildClock(SceneId sc) {
         shadow = true;
         lab.text = Upper(q + L" · " + en); shi.text = wd + L", " + shireTxt;
     }
-    if (mea.text.empty()) L.pop_back();
+    if (!gSet.modern && mea.text.empty()) L.pop_back();
 
     // lay the lines out top to bottom, like the scene's CSS column (gap .4vh)
     struct Placed { ComPtr<IDWriteTextLayout> lay; float x, y, w, h; const Line* l; };
@@ -1596,14 +1627,132 @@ static void CheckConditions() {
 }
 static bool Visible() { return gAttached && gScene && !gLocked && !gDisplayOff && !gCovered; }
 
+// ------------------------------------------------------------------------------------ the tray menu
+// A Lembas icon by the clock: choose the look, the clock style, the moving scene and mealtimes,
+// or preview, update and uninstall, without opening anything.
+#define WM_LEMBAS_TRAY (WM_APP + 7)
+static bool gReattach = false, gReload = false;
+static NOTIFYICONDATAW gTray{};
+static std::wstring LembasDir() {
+    wchar_t base[MAX_PATH] = {};
+    GetEnvironmentVariableW(L"LOCALAPPDATA", base, MAX_PATH);
+    return std::wstring(base) + L"\\Lembas";
+}
+static void TrayAdd() {
+    gTray = {};
+    gTray.cbSize = sizeof gTray;
+    gTray.hWnd = gMsgWnd;
+    gTray.uID = 1;
+    gTray.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
+    gTray.uCallbackMessage = WM_LEMBAS_TRAY;
+    std::wstring ico = LembasDir() + L"\\Icons\\favorites.ico";
+    gTray.hIcon = (HICON)LoadImageW(nullptr, ico.c_str(), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_LOADFROMFILE);
+    if (!gTray.hIcon) gTray.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    wcscpy_s(gTray.szTip, L"Lembas");
+    Shell_NotifyIconW(NIM_ADD, &gTray);
+}
+static void TrayRemove() { if (gTray.cbSize) Shell_NotifyIconW(NIM_DELETE, &gTray); }
+
+// Set one flat value in lembas.json (true/false/"text"), keeping everything else as it is.
+static void SetConfig(const wchar_t* key, const std::wstring& value) {
+    std::wstring path = LembasDir() + L"\\lembas.json", j = ReadAll(path);
+    if (j.empty()) return;
+    std::wstring k = std::wstring(L"\"") + key + L"\"";
+    size_t p = j.find(k);
+    if (p != std::wstring::npos) {
+        size_t c = j.find(L':', p + k.size());
+        size_t e = c + 1;
+        while (e < j.size() && iswspace(j[e])) e++;
+        size_t end = e;
+        if (end < j.size() && j[end] == L'"') { end = j.find(L'"', end + 1); end = end == std::wstring::npos ? j.size() : end + 1; }
+        else while (end < j.size() && j[end] != L',' && j[end] != L'}' && j[end] != L'\r' && j[end] != L'\n') end++;
+        j.replace(e, end - e, value);
+    } else {
+        size_t close = j.rfind(L'}');
+        if (close == std::wstring::npos) return;
+        size_t last = close;
+        while (last > 0 && iswspace(j[last - 1])) last--;
+        j.insert(last, std::wstring(L",\r\n    ") + k + L": " + value);
+    }
+    int n = WideCharToMultiByte(CP_UTF8, 0, j.c_str(), (int)j.size(), nullptr, 0, nullptr, nullptr);
+    std::string out(n, 0);
+    WideCharToMultiByte(CP_UTF8, 0, j.c_str(), (int)j.size(), &out[0], n, nullptr, nullptr);
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    DWORD w; WriteFile(h, out.data(), (DWORD)out.size(), &w, nullptr);
+    CloseHandle(h);
+}
+
+static void RunScript(const wchar_t* script, const std::wstring& args, bool visible) {
+    wchar_t ps[MAX_PATH]; GetSystemDirectoryW(ps, MAX_PATH);
+    std::wstring exe = std::wstring(ps) + L"\\WindowsPowerShell\\v1.0\\powershell.exe";
+    std::wstring a = L"-NoProfile -ExecutionPolicy Bypass " + std::wstring(visible ? L"" : L"-WindowStyle Hidden ") +
+        L"-File \"" + LembasDir() + L"\\Tools\\" + script + L"\" " + args;
+    ShellExecuteW(nullptr, L"open", exe.c_str(), a.c_str(), nullptr, visible ? SW_SHOWNORMAL : SW_HIDE);
+}
+
+enum { IDM_ADAPTIVE = 100, IDM_SHIRE, IDM_REDBOOK, IDM_STARLIT, IDM_ELVEN,
+       IDM_MODERN = 200, IDM_CLASSIC, IDM_NOCLOCK, IDM_SCENE, IDM_MEALS,
+       IDM_PREVIEW = 300, IDM_UPDATE, IDM_UNINSTALL };
+
+static void TrayMenu() {
+    HMENU m = CreatePopupMenu(), clock = CreatePopupMenu();
+    auto check = [](bool on) { return on ? MF_CHECKED : MF_UNCHECKED; };
+    AppendMenuW(m, MF_STRING | MF_DISABLED, 0, L"Lembas");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING | check(gSet.look == L"adaptive"), IDM_ADAPTIVE, L"Follow the sun");
+    AppendMenuW(m, MF_STRING | check(gSet.look == L"shire"), IDM_SHIRE, L"Shire Morning");
+    AppendMenuW(m, MF_STRING | check(gSet.look == L"redbook"), IDM_REDBOOK, L"Red Book");
+    AppendMenuW(m, MF_STRING | check(gSet.look == L"starlit"), IDM_STARLIT, L"Starlit Night");
+    AppendMenuW(m, MF_STRING | check(gSet.look == L"elven"), IDM_ELVEN, L"Elven Silver");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(clock, MF_STRING | check(gSet.clock && gSet.modern), IDM_MODERN, L"Modern");
+    AppendMenuW(clock, MF_STRING | check(gSet.clock && !gSet.modern), IDM_CLASSIC, L"Classic");
+    AppendMenuW(clock, MF_STRING | check(!gSet.clock), IDM_NOCLOCK, L"Off");
+    AppendMenuW(m, MF_POPUP, (UINT_PTR)clock, L"Desktop clock");
+    AppendMenuW(m, MF_STRING | check(gSet.enabled), IDM_SCENE, L"Moving desktop scene");
+    AppendMenuW(m, MF_STRING | check(gSet.meals), IDM_MEALS, L"Hobbit mealtimes");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING, IDM_PREVIEW, L"Preview the four looks");
+    AppendMenuW(m, MF_STRING, IDM_UPDATE, L"Check for updates");
+    AppendMenuW(m, MF_STRING, IDM_UNINSTALL, L"Uninstall Lembas...");
+    POINT pt; GetCursorPos(&pt);
+    SetForegroundWindow(gMsgWnd);
+    int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, pt.x, pt.y, 0, gMsgWnd, nullptr);
+    DestroyMenu(m);   // also destroys the clock submenu
+    PostMessageW(gMsgWnd, WM_NULL, 0, 0);
+    static const wchar_t* looks[] = { L"adaptive", L"shire", L"redbook", L"starlit", L"elven" };
+    switch (cmd) {
+    case IDM_ADAPTIVE: case IDM_SHIRE: case IDM_REDBOOK: case IDM_STARLIT: case IDM_ELVEN:
+        gSet.look = looks[cmd - IDM_ADAPTIVE];
+        RunScript(L"Change-Look.ps1", std::wstring(L"-Look ") + looks[cmd - IDM_ADAPTIVE], false);
+        break;
+    case IDM_MODERN: SetConfig(L"desktopClock", L"true"); SetConfig(L"desktopClockStyle", L"\"modern\""); break;
+    case IDM_CLASSIC: SetConfig(L"desktopClock", L"true"); SetConfig(L"desktopClockStyle", L"\"classic\""); break;
+    case IDM_NOCLOCK: SetConfig(L"desktopClock", L"false"); break;
+    case IDM_SCENE: SetConfig(L"livingDesktop", gSet.enabled ? L"false" : L"true"); break;
+    case IDM_MEALS: SetConfig(L"meals", gSet.meals ? L"false" : L"true"); break;
+    case IDM_PREVIEW: RunScript(L"Preview-Lembas.ps1", L"", true); break;
+    case IDM_UPDATE: RunScript(L"Update-Lembas.ps1", L"", true); break;
+    case IDM_UNINSTALL: RunScript(L"Uninstall-Lembas.ps1", L"", true); break;
+    }
+    if (cmd >= IDM_MODERN && cmd < IDM_PREVIEW) {   // settings changed: apply them now
+        LoadSettings();
+        gClockMinute = -1;
+        gReload = true;
+    }
+}
+
 // ------------------------------------------------------------------------------------ messages
 static UINT gTaskbarCreated;
 static const GUID kDisplayState = { 0x6fe69556, 0x704a, 0x47a0, { 0x8f, 0x24, 0xc2, 0x8d, 0x93, 0x6f, 0xda, 0x47 } };  // GUID_CONSOLE_DISPLAY_STATE
-static bool gReattach = false, gReload = false;
 
 static LRESULT CALLBACK MsgProc(HWND h, UINT m, WPARAM w, LPARAM l) {
-    if (m == gTaskbarCreated) { gReattach = true; return 0; }
+    if (m == gTaskbarCreated) { gReattach = true; TrayAdd(); return 0; }
     switch (m) {
+    case WM_LEMBAS_TRAY:
+        if (LOWORD(l) == WM_RBUTTONUP || LOWORD(l) == WM_LBUTTONUP || LOWORD(l) == WM_CONTEXTMENU) TrayMenu();
+        return 0;
     case WM_SETTINGCHANGE:
         if (w == SPI_SETDESKWALLPAPER || w == SPI_SETCLIENTAREAANIMATION || w == SPI_SETWORKAREA) gReload = true;
         if (l && !wcscmp((const wchar_t*)l, L"intl")) gClockMinute = -1;
@@ -1624,7 +1773,7 @@ static LRESULT CALLBACK MsgProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         if (w == PBT_APMRESUMEAUTOMATIC) { gClockMinute = -1; gReattach = true; }
         return TRUE;
     case WM_ENDSESSION:
-        if (w) { Log(L"Windows is signing out"); Stop(); }
+        if (w) { Log(L"Windows is signing out"); TrayRemove(); Stop(); }
         return 0;
     case WM_CLOSE:
         Log(L"asked to stop"); PostQuitMessage(0); return 0;
@@ -1750,6 +1899,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int) {
     gTaskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
     WTSRegisterSessionNotification(gMsgWnd, NOTIFY_FOR_THIS_SESSION);
     RegisterPowerSettingNotification(gMsgWnd, &kDisplayState, DEVICE_NOTIFY_WINDOW_HANDLE);
+    TrayAdd();
 
     HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
     if (!timer) timer = CreateWaitableTimerW(nullptr, FALSE, nullptr);
@@ -1836,6 +1986,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int) {
         SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE);
         MsgWaitForMultipleObjectsEx(1, &timer, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
     }
+    TrayRemove();
     Stop();
     Log(L"stopped");
     if (mutex) CloseHandle(mutex);
