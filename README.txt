@@ -70,10 +70,13 @@ WHAT CHANGES
 
 GOOD TO KNOW
 ----------------------------------------------------------------------
- - Sunrise and sunset come from your time zone's main city. To use your own location, run
-   Install Lembas from a terminal with  -Latitude <yours> -Longitude <yours>.
- - The sun task checks every 10 minutes, at sign-in and when you unlock, and does nothing
-   unless the look should change.
+ - Sunrise and sunset come from the main city of your current time zone (the same cities and
+   sums as the Lembas phone launcher and watch, so all three change look at the same minute).
+   If you change time zone, Lembas follows. To use your own location instead, run Install
+   Lembas from a terminal with  -Latitude <yours> -Longitude <yours>.
+ - Lembas Desktop starts the sun task at the exact minute a look changes. The task also checks
+   every 10 minutes, at sign-in and when you unlock, and does nothing unless the look should
+   change.
  - Windhawk 2 is an early (alpha) version; it updates itself. Each Lembas mod can be switched
    off in Windhawk if you don't want that part.
  - On ARM PCs (Snapdragon), File Explorer's file list and sidebar stay plain black or white:

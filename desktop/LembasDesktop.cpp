@@ -798,7 +798,7 @@ static void ReleaseShared() {
 }
 
 // ------------------------------------------------------------------------------------ settings
-struct Settings { bool clock = true, meals = true, enabled = true; double lat = -33.87; } gSet;
+struct Settings { bool clock = true, meals = true, enabled = true, adaptive = true; double lat = -33.87, lon = 151.21; } gSet;
 
 static std::wstring ReadAll(const std::wstring& path) {
     HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
@@ -833,6 +833,8 @@ static void LoadSettings() {
     GetEnvironmentVariableW(L"LOCALAPPDATA", base, MAX_PATH);
     std::wstring j = ReadAll(std::wstring(base) + L"\\Lembas\\lembas.json"), v;
     if (JsonValue(j, L"latitude", v)) gSet.lat = _wtof(v.c_str());
+    if (JsonValue(j, L"longitude", v)) gSet.lon = _wtof(v.c_str());
+    gSet.adaptive = !JsonValue(j, L"look", v) || v.find(L"adaptive") != std::wstring::npos;
     gSet.clock = !(JsonValue(j, L"desktopClock", v) && v == L"false");
     gSet.meals = !(JsonValue(j, L"meals", v) && v == L"false");
     gSet.enabled = !(JsonValue(j, L"livingDesktop", v) && v == L"false");
@@ -849,6 +851,61 @@ static SceneId SceneFromWallpaper() {
         if (w.size() >= n.size() && _wcsicmp(w.c_str() + w.size() - n.size(), n.c_str()) == 0) return (SceneId)i;
     }
     return NONE;
+}
+
+// ------------------------------------------------------------------------------------ the sun
+// The same sums as the phone (Sun.kt), the watch and LembasSun.ps1, so every device changes look
+// at the same minute. This app is always running, so it starts the Lembas Sun task at the exact
+// minute of a switch (the task itself also runs every 10 minutes, at sign-in and on unlock).
+struct SunDay { int rise, noon, set; };
+static SunDay SunToday(const SYSTEMTIME& now, double lat, double lon) {
+    SYSTEMTIME noonLocal = now, utc;
+    noonLocal.wHour = 12; noonLocal.wMinute = noonLocal.wSecond = noonLocal.wMilliseconds = 0;
+    double offset = 0;
+    if (TzSpecificLocalTimeToSystemTime(nullptr, &noonLocal, &utc)) {
+        FILETIME a, b;
+        SystemTimeToFileTime(&noonLocal, &a); SystemTimeToFileTime(&utc, &b);
+        long long da = ((long long)a.dwHighDateTime << 32) | a.dwLowDateTime, db = ((long long)b.dwHighDateTime << 32) | b.dwLowDateTime;
+        offset = (double)(da - db) / 600000000.0;  // 100ns ticks -> minutes
+    }
+    static const int cum[] = { 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334 };
+    int y = now.wYear;
+    bool leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    int doy = cum[now.wMonth - 1] + now.wDay + (leap && now.wMonth > 2 ? 1 : 0);
+    const double PI = 3.14159265358979323846;
+    double g = 2 * PI / 365.0 * (doy - 1);
+    double eot = 229.18 * (0.000075 + 0.001868 * cos(g) - 0.032077 * sin(g) - 0.014615 * cos(2 * g) - 0.040849 * sin(2 * g));
+    double dec = 0.006918 - 0.399912 * cos(g) + 0.070257 * sin(g) - 0.006758 * cos(2 * g) + 0.000907 * sin(2 * g) - 0.002697 * cos(3 * g) + 0.00148 * sin(3 * g);
+    double noon = 720 - 4 * lon - eot + offset;
+    double latR = lat * PI / 180;
+    double cosHa = cos(90.833 * PI / 180) / (cos(latR) * cos(dec)) - tan(latR) * tan(dec);
+    double ha = cosHa >= 1 ? 0 : cosHa <= -1 ? 180 : acos(cosHa) * 180 / PI;
+    auto clampMin = [](double m) { return std::min(1439, std::max(0, (int)m)); };
+    return { clampMin(noon - 4 * ha), clampMin(noon), clampMin(noon + 4 * ha) };
+}
+static SceneId SunScene(const SYSTEMTIME& now) {
+    SunDay d = SunToday(now, gSet.lat, gSet.lon);
+    int m = now.wHour * 60 + now.wMinute;
+    if (m >= d.rise && m < d.noon) return SHIRE;
+    if (m >= d.noon && m < d.set) return REDBOOK;
+    if (m >= 23 * 60 || m < 4 * 60) return ELVEN;
+    return STARLIT;
+}
+static void CheckSun() {
+    static int lastMinute = -1, sinceReload = 0;
+    static ULONGLONG lastKick = 0;
+    SYSTEMTIME st; GetLocalTime(&st);
+    int minute = st.wHour * 60 + st.wMinute;
+    if (minute == lastMinute) return;
+    lastMinute = minute;
+    if (++sinceReload >= 10) { sinceReload = 0; LoadSettings(); }  // the time zone (and so the city) may have changed
+    if (!gSet.adaptive || gForced != NONE) return;
+    SceneId want = SunScene(st), shown = SceneFromWallpaper();
+    if (shown == NONE || want == shown) return;
+    ULONGLONG t = GetTickCount64();
+    if (lastKick && t - lastKick < 5 * 60 * 1000) return;
+    lastKick = t;
+    ShellExecuteW(nullptr, L"open", L"schtasks.exe", L"/Run /TN \"\\Lembas\\Lembas Sun\"", nullptr, SW_HIDE);
 }
 
 // ------------------------------------------------------------------------------------ monitors
@@ -1744,6 +1801,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int) {
             nextCheck = now + 1.0;
         }
 
+        CheckSun();
         bool visible = Visible();
         bool animate = visible && !gStill;
         if (visible) {
@@ -1768,7 +1826,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int) {
         // sleep until the next frame, the next minute, or the next check, whichever is first
         double wake = nextCheck;
         if (animate) wake = std::min(wake, nextFrame);
-        if (visible) {
+        if (visible || gSet.adaptive) {  // the clock, and the minute a look changes
             SYSTEMTIME st; GetLocalTime(&st);
             wake = std::min(wake, now + (60 - st.wSecond) - st.wMilliseconds / 1000.0 + .02);
         }

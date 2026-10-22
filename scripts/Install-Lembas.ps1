@@ -237,6 +237,7 @@ $config | Add-Member -NotePropertyName releaseApi -NotePropertyValue 'https://ap
 if (-not [double]::IsNaN($Latitude) -and -not [double]::IsNaN($Longitude)) {
     $config | Add-Member -NotePropertyName latitude -NotePropertyValue $Latitude -Force
     $config | Add-Member -NotePropertyName longitude -NotePropertyValue $Longitude -Force
+    $config | Add-Member -NotePropertyName locationSource -NotePropertyValue 'manual' -Force
 } elseif (-not $config.PSObject.Properties['latitude']) {
     # The main city of your time zone: sunrise and sunset to within a few minutes, no location access needed
     $cities = @{

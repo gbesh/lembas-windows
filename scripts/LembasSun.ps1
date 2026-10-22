@@ -39,7 +39,8 @@ function Get-SunTimes([datetime]$day, [double]$lat, [double]$lon) {
     $latR = $lat * [math]::PI / 180
     $cosHa = [math]::Cos(90.833 * [math]::PI / 180) / ([math]::Cos($latR) * [math]::Cos($dec)) - [math]::Tan($latR) * [math]::Tan($dec)
     $ha = if ($cosHa -ge 1) { 0 } elseif ($cosHa -le -1) { 180 } else { [math]::Acos($cosHa) * 180 / [math]::PI }
-    @{ rise = $noon - 4 * $ha; noon = $noon; set = $noon + 4 * $ha }
+    # whole minutes, as the phone and the watch use
+    @{ rise = [math]::Floor($noon - 4 * $ha); noon = [math]::Floor($noon); set = [math]::Floor($noon + 4 * $ha) }
 }
 $phase = $Look
 $preview = Join-Path $Dest 'preview.json'
@@ -48,6 +49,39 @@ if (-not $phase -and (Test-Path $preview)) {
     if ([datetime]$pv.until -gt (Get-Date)) { $phase = $pv.look } else { Remove-Item $preview -Force }
 }
 if (-not $phase -and $config.look -and $config.look -ne 'adaptive') { $phase = $config.look }
+# Where the sun is worked out from: your own coordinates if you gave them at install, otherwise the
+# main city of the current time zone (the same cities the phone and the watch use), so Lembas
+# follows you when the time zone changes.
+$zoneCities = @{
+    'AUS Eastern Standard Time' = @(-33.87, 151.21); 'E. Australia Standard Time' = @(-27.47, 153.03)
+    'Cen. Australia Standard Time' = @(-34.93, 138.60); 'AUS Central Standard Time' = @(-12.46, 130.84)
+    'W. Australia Standard Time' = @(-31.95, 115.86); 'Tasmania Standard Time' = @(-42.88, 147.33)
+    'Lord Howe Standard Time' = @(-31.55, 159.08); 'New Zealand Standard Time' = @(-36.85, 174.76)
+    'Fiji Standard Time' = @(-18.14, 178.44); 'Tokyo Standard Time' = @(35.68, 139.69)
+    'Korea Standard Time' = @(37.57, 126.98); 'China Standard Time' = @(31.23, 121.47)
+    'Singapore Standard Time' = @(1.35, 103.82); 'India Standard Time' = @(19.08, 72.88)
+    'Arabian Standard Time' = @(25.20, 55.27); 'SE Asia Standard Time' = @(13.76, 100.50)
+    'GMT Standard Time' = @(51.51, -0.13); 'W. Europe Standard Time' = @(52.52, 13.40)
+    'Romance Standard Time' = @(48.86, 2.35); 'GTB Standard Time' = @(37.98, 23.73)
+    'Russian Standard Time' = @(55.76, 37.62); 'South Africa Standard Time' = @(-26.20, 28.05)
+    'Egypt Standard Time' = @(30.04, 31.24); 'W. Central Africa Standard Time' = @(6.52, 3.38)
+    'E. Africa Standard Time' = @(-1.29, 36.82); 'Eastern Standard Time' = @(40.71, -74.01)
+    'Central Standard Time' = @(41.88, -87.63); 'Mountain Standard Time' = @(39.74, -104.99)
+    'US Mountain Standard Time' = @(33.45, -112.07); 'Pacific Standard Time' = @(34.05, -118.24)
+    'Central Standard Time (Mexico)' = @(19.43, -99.13); 'E. South America Standard Time' = @(-23.55, -46.63)
+    'Argentina Standard Time' = @(-34.60, -58.38); 'Pacific SA Standard Time' = @(-33.45, -70.67)
+    'SA Pacific Standard Time' = @(4.71, -74.07); 'Hawaiian Standard Time' = @(21.31, -157.86)
+    'Alaskan Standard Time' = @(61.22, -149.90)
+}
+if (-not ($config.PSObject.Properties['locationSource'] -and $config.locationSource -eq 'manual')) {
+    $c = $zoneCities[[TimeZoneInfo]::Local.Id]
+    if (-not $c) { $c = @(0, [TimeZoneInfo]::Local.GetUtcOffset((Get-Date).Date.AddHours(12)).TotalMinutes / 4) }
+    if ([double]$config.latitude -ne $c[0] -or [double]$config.longitude -ne $c[1]) {
+        $config | Add-Member -NotePropertyName latitude -NotePropertyValue $c[0] -Force
+        $config | Add-Member -NotePropertyName longitude -NotePropertyValue $c[1] -Force
+        $config | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $Dest 'lembas.json') -Encoding UTF8
+    }
+}
 if (-not $phase) {
     $now = Get-Date
     $sun = Get-SunTimes $now ([double]$config.latitude) ([double]$config.longitude)
