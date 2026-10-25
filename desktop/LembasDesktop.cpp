@@ -861,7 +861,7 @@ static SceneId SceneFromWallpaper() {
 // The same sums as the phone (Sun.kt), the watch and LembasSun.ps1, so every device changes look
 // at the same minute. This app is always running, so it starts the Lembas Sun task at the exact
 // minute of a switch (the task itself also runs every 10 minutes, at sign-in and on unlock).
-struct SunDay { int rise, noon, set; };
+struct SunDay { int rise, noon, evening, set; };
 static SunDay SunToday(const SYSTEMTIME& now, double lat, double lon) {
     SYSTEMTIME noonLocal = now, utc;
     noonLocal.wHour = 12; noonLocal.wMinute = noonLocal.wSecond = noonLocal.wMilliseconds = 0;
@@ -884,14 +884,17 @@ static SunDay SunToday(const SYSTEMTIME& now, double lat, double lon) {
     double latR = lat * PI / 180;
     double cosHa = cos(90.833 * PI / 180) / (cos(latR) * cos(dec)) - tan(latR) * tan(dec);
     double ha = cosHa >= 1 ? 0 : cosHa <= -1 ? 180 : acos(cosHa) * 180 / PI;
+    // late afternoon: the sun down to 15 degrees, when the fireside Red Book look takes over
+    double cosHe = (sin(15 * PI / 180) - sin(latR) * sin(dec)) / (cos(latR) * cos(dec));
+    double he = std::min(ha, cosHe >= 1 ? 0.0 : cosHe <= -1 ? 180.0 : acos(cosHe) * 180 / PI);
     auto clampMin = [](double m) { return std::min(1439, std::max(0, (int)m)); };
-    return { clampMin(noon - 4 * ha), clampMin(noon), clampMin(noon + 4 * ha) };
+    return { clampMin(noon - 4 * ha), clampMin(noon), clampMin(noon + 4 * he), clampMin(noon + 4 * ha) };
 }
 static SceneId SunScene(const SYSTEMTIME& now) {
     SunDay d = SunToday(now, gSet.lat, gSet.lon);
     int m = now.wHour * 60 + now.wMinute;
-    if (m >= d.rise && m < d.noon) return SHIRE;
-    if (m >= d.noon && m < d.set) return REDBOOK;
+    if (m >= d.rise && m < d.evening) return SHIRE;
+    if (m >= d.evening && m < d.set) return REDBOOK;
     if (m >= 23 * 60 || m < 4 * 60) return ELVEN;
     return STARLIT;
 }
