@@ -4,10 +4,10 @@ One small bite is enough.
 
 Your whole PC in four Middle-earth looks that follow the sun, like the Lembas phone launcher:
 
-  Shire Morning   sunrise -> midday      light   sage and green ink, the Shire hills
-  Red Book        midday  -> sunset      light   parchment and red ink
-  Starlit Night   sunset  -> 11pm        dark    midnight and gold, stars and the moon
-  Elven Silver    11pm    -> 4am         dark    black-blue and silver
+  Shire Morning   sunrise   -> late aft.  light   sage and green ink, the Shire hills
+  Red Book        late aft. -> sunset     light   parchment and red ink
+  Starlit Night   sunset    -> 11pm       dark    midnight and gold, stars and the moon
+  Elven Silver    11pm      -> 4am        dark    black-blue and silver
   (Starlit Night again from 4am until sunrise)
 
 

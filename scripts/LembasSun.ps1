@@ -39,8 +39,12 @@ function Get-SunTimes([datetime]$day, [double]$lat, [double]$lon) {
     $latR = $lat * [math]::PI / 180
     $cosHa = [math]::Cos(90.833 * [math]::PI / 180) / ([math]::Cos($latR) * [math]::Cos($dec)) - [math]::Tan($latR) * [math]::Tan($dec)
     $ha = if ($cosHa -ge 1) { 0 } elseif ($cosHa -le -1) { 180 } else { [math]::Acos($cosHa) * 180 / [math]::PI }
+    # late afternoon: when the sun has dropped to 15 degrees (the fireside Red Book look takes over)
+    $cosHe = ([math]::Sin(15 * [math]::PI / 180) - [math]::Sin($latR) * [math]::Sin($dec)) / ([math]::Cos($latR) * [math]::Cos($dec))
+    $he = if ($cosHe -ge 1) { 0 } elseif ($cosHe -le -1) { 180 } else { [math]::Acos($cosHe) * 180 / [math]::PI }
+    $he = [math]::Min($he, $ha)
     # whole minutes, as the phone and the watch use
-    @{ rise = [math]::Floor($noon - 4 * $ha); noon = [math]::Floor($noon); set = [math]::Floor($noon + 4 * $ha) }
+    @{ rise = [math]::Floor($noon - 4 * $ha); noon = [math]::Floor($noon); evening = [math]::Floor($noon + 4 * $he); set = [math]::Floor($noon + 4 * $ha) }
 }
 $phase = $Look
 $preview = Join-Path $Dest 'preview.json'
@@ -86,8 +90,8 @@ if (-not $phase) {
     $now = Get-Date
     $sun = Get-SunTimes $now ([double]$config.latitude) ([double]$config.longitude)
     $m = $now.Hour * 60 + $now.Minute
-    $phase = if ($m -ge $sun.rise -and $m -lt $sun.noon) { 'shire' }
-        elseif ($m -ge $sun.noon -and $m -lt $sun.set) { 'redbook' }
+    $phase = if ($m -ge $sun.rise -and $m -lt $sun.evening) { 'shire' }
+        elseif ($m -ge $sun.evening -and $m -lt $sun.set) { 'redbook' }
         elseif ($m -ge 23 * 60 -or $m -lt 4 * 60) { 'elven' }
         else { 'starlit' }
 }

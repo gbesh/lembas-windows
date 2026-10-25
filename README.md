@@ -4,8 +4,8 @@ A Middle-earth theme for Windows 11 that follows the sun, in four looks:
 
 | Look | When | Feel |
 |---|---|---|
-| **Shire Morning** | sunrise → midday | light: sage and green ink, the Shire hills |
-| **Red Book** | midday → sunset | light: parchment and red ink |
+| **Shire Morning** | sunrise → late afternoon | light: sage and green ink, the Shire hills |
+| **Red Book** | late afternoon → sunset | light: parchment and red ink |
 | **Starlit Night** | sunset → 11pm, 4am → sunrise | dark: midnight and gold, stars and the moon |
 | **Elven Silver** | 11pm → 4am | dark: black-blue and silver |
 
