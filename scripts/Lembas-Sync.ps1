@@ -188,6 +188,7 @@ function Local-Settings {
 function Sig($s) { "{0}|{1}|{2}|{3}|{4}" -f $s.look, $s.keepUntil, $s.weather, $s.clock, $s.meals }
 $syncState = if (Test-Path $stateFile) { Get-Content $stateFile -Raw | ConvertFrom-Json } else { [pscustomobject]@{ sig = ''; remoteUpdated = 0 } }
 
+$applyAfter = $false
 try {
     $mine = Local-Settings
     $changedHere = (Sig $mine) -ne $syncState.sig
@@ -208,7 +209,9 @@ try {
         $mine = Local-Settings
         Log ("took the settings from your {0}: look {1}" -f (Get-Prop $remote 'by' 'other device'), $mine.look)
         # apply: the look now, and tell Lembas Desktop to re-read its settings
-        if (-not $NoApply) { & (Join-Path $PSScriptRoot 'LembasSun.ps1') -SkipSync }   # (Lembas Sun applies it itself when it called us)
+        # apply it through the Lembas Sun task (it has the rights Windhawk needs for the taskbar and
+        # Start styles); Lembas Sun applies it itself when it was the one that called us
+        $applyAfter = -not $NoApply
         $exe = Join-Path $Dest 'Living\LembasDesktop.exe'
         if (Test-Path $exe) { Start-Process $exe -ArgumentList '--reload' -WindowStyle Hidden }
         $syncState = [pscustomobject]@{ sig = (Sig $mine); remoteUpdated = $remoteUpdated }
@@ -222,6 +225,10 @@ try {
         $syncState = [pscustomobject]@{ sig = (Sig $mine); remoteUpdated = $remoteUpdated }
     }
     $syncState | ConvertTo-Json | Set-Content $stateFile -Encoding UTF8
+    if ($applyAfter) {
+        if (Get-ScheduledTask -TaskPath '\Lembas\' -TaskName 'Lembas Sun' -ErrorAction SilentlyContinue) { Start-ScheduledTask -TaskPath '\Lembas\' -TaskName 'Lembas Sun' }
+        else { & (Join-Path $PSScriptRoot 'LembasSun.ps1') -SkipSync }
+    }
     if ($SignIn) { Say "Done. This PC now keeps the same look as your phone and watch." 'Green'; Start-Sleep 3 }
 } catch {
     Log "sync failed: $($_.Exception.Message)"

@@ -2434,6 +2434,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int) {
         }
 
         CheckSun();
+        // Signed in to sync: ask Google Drive for a change from the phone every 90 seconds (a quick,
+        // hidden check; the look then changes within a minute or two of changing it on the phone)
+        if (!gSaver) {
+            static ULONGLONG lastSync = GetTickCount64();
+            if (GetTickCount64() - lastSync > 90 * 1000) {
+                lastSync = GetTickCount64();
+                if (SyncSignedIn() && !gLocked && !gDisplayOff) RunScript(L"Lembas-Sync.ps1", L"-Quiet", false);
+            }
+        }
         bool visible = Visible();
         bool animate = visible && !gStill;
         if (visible) {

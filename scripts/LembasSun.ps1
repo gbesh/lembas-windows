@@ -254,6 +254,12 @@ if (-not $NoWindhawk -and (Test-Path $cli)) {
     $list = Get-JsonData ((& $cli --json mod list 2>$null) -join "`n")
     $have = @($list.mods | ForEach-Object { $_.id })
     $tmp = Join-Path $env:TEMP 'lembas-style.json'
+    # What each mod was last given: a mod whose settings haven't changed isn't touched again (so the
+    # icon mod never asks to restart Explorer, and nothing flickers that doesn't need to)
+    $appliedFile = Join-Path $Dest 'windhawk-applied.json'
+    $applied = @{}
+    if (Test-Path $appliedFile) { try { (Get-Content $appliedFile -Raw | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $applied[$_.Name] = $_.Value } } catch { } }
+    $sha = [Security.Cryptography.SHA256]::Create()
     foreach ($s in $sets) {
         if ($have -notcontains $s.mod) { continue }
         # Windhawk wants every declared setting: start from the mod's defaults, drop default list
@@ -272,11 +278,19 @@ if (-not $NoWindhawk -and (Test-Path $cli)) {
             }
         }
         foreach ($k in $ours.Keys) { $merged[$k] = $ours[$k] }
-        [IO.File]::WriteAllText($tmp, ($merged | ConvertTo-Json -Depth 3), (New-Object Text.UTF8Encoding $false))
+        # Another program (such as ExplorerBlurMica or TranslucentTB) wanting XAML diagnostics: the
+        # Lembas styles keep them, quietly, instead of asking you every time
+        if ($merged.Contains('xamlDiagnosticsHandling')) { $merged['xamlDiagnosticsHandling'] = 'block' }
+        $json = $merged | ConvertTo-Json -Depth 3
+        $hash = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($json))).Replace('-', '')
+        if ($applied[$s.mod] -eq $hash) { continue }
+        [IO.File]::WriteAllText($tmp, $json, (New-Object Text.UTF8Encoding $false))
         $out = (& $cli mod settings write $s.mod $tmp 2>&1) -join ' '
         if ($LASTEXITCODE -ne 0) { Log "  Windhawk didn't take the $($s.mod) style: $($out.Substring(0, [Math]::Min(300, $out.Length)))" }
+        else { $applied[$s.mod] = $hash }
     }
     Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+    $applied | ConvertTo-Json | Set-Content $appliedFile -Encoding UTF8
 }
 
 # ------------------------------------------------------------------ accent colour
