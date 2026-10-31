@@ -13,7 +13,8 @@
 param(
     [ValidateSet('', 'shire', 'redbook', 'starlit', 'elven')][string]$Look = '',
     [switch]$Force,
-    [switch]$NoWindhawk
+    [switch]$NoWindhawk,
+    [switch]$SkipSync
 )
 
 $ErrorActionPreference = 'Continue'
@@ -24,7 +25,17 @@ function Log($text) {
     Add-Content -Path $logFile -Value ("[{0:yyyy-MM-dd HH:mm}] {1}" -f (Get-Date), $text) -ErrorAction SilentlyContinue
 }
 
+# Settings sync with your phone and watch (only once you've signed in with Google from the tray)
+if (-not $SkipSync -and (Test-Path (Join-Path $env:APPDATA 'Lembas\google-token.dat'))) {
+    try { & (Join-Path $PSScriptRoot 'Lembas-Sync.ps1') -Quiet -NoApply } catch { }
+}
 $config = Get-Content (Join-Path $Dest 'lembas.json') -Raw | ConvertFrom-Json
+# A look kept "until the next change" (chosen on the phone) hands back to following the sun
+if ($config.PSObject.Properties['keepUntil'] -and [long]$config.keepUntil -gt 0 -and
+    [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() -ge [long]$config.keepUntil) {
+    $config.look = 'adaptive'; $config.keepUntil = 0
+    $config | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $Dest 'lembas.json') -Encoding UTF8
+}
 $looks = Get-Content (Join-Path $Dest 'looks.json') -Raw | ConvertFrom-Json
 $stateFile = Join-Path $Dest 'sun-state.json'
 $state = if (Test-Path $stateFile) { Get-Content $stateFile -Raw | ConvertFrom-Json } else { [pscustomobject]@{ phase = '' } }
@@ -145,13 +156,14 @@ function Update-Weather {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         $lat = ([double]$config.latitude).ToString([Globalization.CultureInfo]::InvariantCulture)
         $lon = ([double]$config.longitude).ToString([Globalization.CultureInfo]::InvariantCulture)
-        $w = Invoke-RestMethod "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=weather_code" -TimeoutSec 15
+        $w = Invoke-RestMethod "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=weather_code,wind_speed_10m" -TimeoutSec 15
         $code = [int]$w.current.weather_code
         # WMO codes -> 0 clear, 1 cloudy, 2 fog, 3 rain, 4 snow, 5 storm
         $wx = if ($code -le 1) { 0 } elseif ($code -le 3) { 1 } elseif ($code -le 48) { 2 } elseif ($code -le 67 -or ($code -ge 80 -and $code -le 82)) { 3 } `
               elseif ($code -le 77 -or $code -eq 85 -or $code -eq 86) { 4 } else { 5 }
         $at = [int][double]::Parse((Get-Date -UFormat %s), [Globalization.CultureInfo]::InvariantCulture)
-        Set-Content -Path $file -Value "{ `"wx`": $wx, `"code`": $code, `"at`": $at }" -Encoding UTF8
+        $wind = [int][double]$w.current.wind_speed_10m
+        Set-Content -Path $file -Value "{ `"wx`": $wx, `"code`": $code, `"wind`": $wind, `"at`": $at }" -Encoding UTF8
     } catch { Log "  weather: $($_.Exception.Message)" }
 }
 Update-Weather
@@ -161,10 +173,64 @@ $north = @('winter', 'winter', 'spring', 'spring', 'spring', 'summer', 'summer',
 $season = if ([double]$config.latitude -lt 0) { @{ winter = 'summer'; summer = 'winter'; spring = 'autumn'; autumn = 'spring' }[$north] } else { $north }
 
 $l = $looks.$phase
+
+# The accent drifts a little within a look (following the sun only): the Shire's green turns golden
+# through the late afternoon, and Starlit Night's gold goes moonlit-silver toward midnight.
+function Mix-Hex([string]$a, [string]$b, [double]$k) {
+    -join (0, 2, 4 | ForEach-Object {
+        $x = [Convert]::ToInt32($a.Substring($_, 2), 16); $y = [Convert]::ToInt32($b.Substring($_, 2), 16)
+        '{0:X2}' -f [int][math]::Round($x + ($y - $x) * $k) })
+}
+$stage = 0
+if ((-not $Look) -and $config.look -eq 'adaptive' -and ($phase -eq 'shire' -or $phase -eq 'starlit')) {
+    $nowD = Get-Date; $mm = $nowD.Hour * 60 + $nowD.Minute
+    $sunT = Get-SunTimes $nowD ([double]$config.latitude) ([double]$config.longitude)
+    if ($phase -eq 'shire') { $f = ($mm - $sunT.noon) / [math]::Max(1, $sunT.evening - $sunT.noon) }
+    else { $fromDusk = $mm - $sunT.set; if ($fromDusk -lt 0) { $fromDusk += 1440 }; $f = $fromDusk / [math]::Max(1, 1380 - $sunT.set) }
+    $stage = if ($f -ge .66) { 2 } elseif ($f -ge .33) { 1 } else { 0 }
+}
+$accent = @($l.accent)
+if ($stage -gt 0) {
+    $toward = if ($phase -eq 'shire') { 'C9923A' } else { 'B9C6E6' }
+    $accent = @($l.accent | ForEach-Object { Mix-Hex $_ $toward (0.14 * $stage) })
+}
+function Set-Accent {
+    $accentKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Accent'
+    $dwmKey = 'HKCU:\Software\Microsoft\Windows\DWM'
+    foreach ($k in $accentKey, $dwmKey) { if (-not (Test-Path $k)) { New-Item -Path $k -Force | Out-Null } }
+    $palette = New-Object byte[] 32
+    for ($i = 0; $i -lt 8; $i++) {
+        $hex = $accent[$i]
+        $palette[$i * 4] = [Convert]::ToByte($hex.Substring(0, 2), 16)
+        $palette[$i * 4 + 1] = [Convert]::ToByte($hex.Substring(2, 2), 16)
+        $palette[$i * 4 + 2] = [Convert]::ToByte($hex.Substring(4, 2), 16)
+    }
+    $main = $accent[4]
+    Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'AutoColorization' -Value 0 -Type DWord
+    Set-ItemProperty -Path $accentKey -Name 'AccentPalette' -Value $palette -Type Binary
+    Set-ItemProperty -Path $accentKey -Name 'AccentColorMenu' -Value (Abgr $main) -Type DWord
+    Set-ItemProperty -Path $accentKey -Name 'StartColorMenu' -Value (Abgr $accent[5]) -Type DWord
+    Set-ItemProperty -Path $dwmKey -Name 'AccentColor' -Value (Abgr $main) -Type DWord
+    Set-ItemProperty -Path $dwmKey -Name 'ColorizationColor' -Value (Argb $main) -Type DWord
+    Set-ItemProperty -Path $dwmKey -Name 'ColorizationAfterglow' -Value (Argb $main) -Type DWord
+    Set-ItemProperty -Path $dwmKey -Name 'ColorPrevalence' -Value 1 -Type DWord
+}
+function Abgr([string]$hex) { [BitConverter]::ToInt32([byte[]]@([Convert]::ToByte($hex.Substring(0, 2), 16), [Convert]::ToByte($hex.Substring(2, 2), 16), [Convert]::ToByte($hex.Substring(4, 2), 16), 0xFF), 0) }
+function Argb([string]$hex) { [BitConverter]::ToInt32([byte[]]@([Convert]::ToByte($hex.Substring(4, 2), 16), [Convert]::ToByte($hex.Substring(2, 2), 16), [Convert]::ToByte($hex.Substring(0, 2), 16), 0xC4), 0) }
 $wallpaper = Join-Path $Dest ("Wallpapers\Seasons\$season\" + $l.wallpaper)
 if (-not (Test-Path $wallpaper)) { $wallpaper = Join-Path $Dest ("Wallpapers\" + $l.wallpaper) }
 $currentWall = (Get-ItemProperty 'HKCU:\Control Panel\Desktop' -ErrorAction SilentlyContinue).WallPaper
-if (-not $Force -and $state.phase -eq $phase -and $currentWall -eq $wallpaper) { exit 0 }
+if (-not $Force -and $state.phase -eq $phase -and $currentWall -eq $wallpaper) {
+    $was = if ($state.PSObject.Properties['stage']) { [int]$state.stage } else { 0 }
+    if ($was -ne $stage) {   # the same look, a little further into it: just the accent
+        Add-Type -Namespace LembasSunA -Name Native -MemberDefinition '[DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", CharSet = CharSet.Unicode)] public static extern IntPtr Smt(IntPtr h, uint m, UIntPtr w, string l, uint f, uint t, out UIntPtr r);'
+        Set-Accent
+        $r = [UIntPtr]::Zero; [void][LembasSunA.Native]::Smt([IntPtr]0xffff, 0x001A, [UIntPtr]::Zero, 'ImmersiveColorSet', 2, 3000, [ref]$r)
+        Log "Accent: $phase, stage $stage"
+        [pscustomobject]@{ phase = $phase; stage = $stage; at = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content -Path $stateFile -Encoding UTF8
+    }
+    exit 0
+}
 
 Log "Switching to $($l.name)"
 Add-Type -Namespace LembasSun -Name Native -MemberDefinition @'
@@ -214,27 +280,7 @@ if (-not $NoWindhawk -and (Test-Path $cli)) {
 }
 
 # ------------------------------------------------------------------ accent colour
-$accentKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Accent'
-$dwmKey = 'HKCU:\Software\Microsoft\Windows\DWM'
-foreach ($k in $accentKey, $dwmKey) { if (-not (Test-Path $k)) { New-Item -Path $k -Force | Out-Null } }
-$palette = New-Object byte[] 32
-for ($i = 0; $i -lt 8; $i++) {
-    $hex = $l.accent[$i]
-    $palette[$i * 4] = [Convert]::ToByte($hex.Substring(0, 2), 16)
-    $palette[$i * 4 + 1] = [Convert]::ToByte($hex.Substring(2, 2), 16)
-    $palette[$i * 4 + 2] = [Convert]::ToByte($hex.Substring(4, 2), 16)
-}
-function Abgr([string]$hex) { [BitConverter]::ToInt32([byte[]]@([Convert]::ToByte($hex.Substring(0, 2), 16), [Convert]::ToByte($hex.Substring(2, 2), 16), [Convert]::ToByte($hex.Substring(4, 2), 16), 0xFF), 0) }
-function Argb([string]$hex) { [BitConverter]::ToInt32([byte[]]@([Convert]::ToByte($hex.Substring(4, 2), 16), [Convert]::ToByte($hex.Substring(2, 2), 16), [Convert]::ToByte($hex.Substring(0, 2), 16), 0xC4), 0) }
-$main = $l.accent[4]
-Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'AutoColorization' -Value 0 -Type DWord
-Set-ItemProperty -Path $accentKey -Name 'AccentPalette' -Value $palette -Type Binary
-Set-ItemProperty -Path $accentKey -Name 'AccentColorMenu' -Value (Abgr $main) -Type DWord
-Set-ItemProperty -Path $accentKey -Name 'StartColorMenu' -Value (Abgr $l.accent[5]) -Type DWord
-Set-ItemProperty -Path $dwmKey -Name 'AccentColor' -Value (Abgr $main) -Type DWord
-Set-ItemProperty -Path $dwmKey -Name 'ColorizationColor' -Value (Argb $main) -Type DWord
-Set-ItemProperty -Path $dwmKey -Name 'ColorizationAfterglow' -Value (Argb $main) -Type DWord
-Set-ItemProperty -Path $dwmKey -Name 'ColorPrevalence' -Value 1 -Type DWord
+Set-Accent
 
 # ------------------------------------------------------------------ light or dark, and the wallpaper
 $pers = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
@@ -261,4 +307,4 @@ if (-not (Test-Path $preview)) {
     } catch { Log "  lock screen: $_" }
 }
 
-[pscustomobject]@{ phase = $phase; at = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content -Path $stateFile -Encoding UTF8
+[pscustomobject]@{ phase = $phase; stage = $stage; at = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content -Path $stateFile -Encoding UTF8

@@ -46,7 +46,10 @@ if (-not $Look) {
     if (-not $Look) { exit 0 }
 }
 $config.look = $Look
+$config | Add-Member -NotePropertyName keepUntil -NotePropertyValue 0 -Force   # chosen here: kept until changed
 $config | ConvertTo-Json | Set-Content $configFile -Encoding UTF8
+# tell your other devices (if you've signed in to sync)
+if (Test-Path (Join-Path $env:APPDATA 'Lembas\google-token.dat')) { try { & (Join-Path $PSScriptRoot 'Lembas-Sync.ps1') -Quiet } catch { } }
 if (Get-ScheduledTask -TaskPath '\Lembas\' -TaskName 'Lembas Sun' -ErrorAction SilentlyContinue) {
     Start-ScheduledTask -TaskPath '\Lembas\' -TaskName 'Lembas Sun'
 } else {

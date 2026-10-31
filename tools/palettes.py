@@ -43,7 +43,20 @@ LOOKS = {
 }
 
 
+def less_yellow(hexs):
+    """Light creams and parchments a little less yellow (the same rule as the scenes, the phone and
+    the watch): hue 30-65 degrees, lightness above 0.66, saturation cut by 45%."""
+    import colorsys
+    r, g, b = (int(hexs[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    h, l, s = colorsys.rgb_to_hls(r, g, b)
+    if 30 / 360 <= h <= 65 / 360 and l > 0.66 and s < 0.95:
+        r, g, b = colorsys.hls_to_rgb(h, l, s * 0.55)
+        return "%02X%02X%02X" % tuple(round(c * 255) for c in (r, g, b))
+    return hexs
+
+
 def apply(text, phase):
+    import re
     for old, new in LOOKS[phase]["swap"].items():
         text = text.replace(old, new)
-    return text
+    return re.sub(r"(#(?:[0-9A-F]{2})?)([0-9A-F]{6})(?![0-9A-Za-z])", lambda m: m.group(1) + less_yellow(m.group(2)), text)

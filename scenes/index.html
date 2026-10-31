@@ -127,10 +127,10 @@ const P = PC ? {
 function shire() {
   const S = SEASON;
   const pal = {
-    spring: { hills: ['#C9DDB3', '#AFCD96', '#93BC7C', '#79A866', '#6E9C55', '#4F8043'], tree: ['#7DAE5E', '#93BF72', '#F2B8C6'], flowers: ['#F4B6C7', '#FFFFFF', '#F5D36B', '#D98BB0'], sky: ['#C3E3E2', '#E9F0DF', '#FCF0D6'] },
-    summer: { hills: ['#C3D7AE', '#A9C793', '#8DB677', '#79A35F', '#6E9A56', '#4E7E42'], tree: ['#6A9850', '#7DAA5F', '#86B266'], flowers: ['#F0A27E', '#F5D36B', '#FFFFFF', '#D98BB0'], sky: ['#BFE0E0', '#E7EEDD', '#FCEFD2'] },
-    autumn: { hills: ['#D6D2A2', '#C3BE84', '#A9AE6A', '#9A9C58', '#8D8C4E', '#6E7440'], tree: ['#D9843A', '#E8A646', '#C8562E'], flowers: ['#E8A646', '#C8562E', '#F5D36B', '#B8743A'], sky: ['#CFE0DE', '#F0E9D6', '#FBE3C2'] },
-    winter: { hills: ['#E9EEF0', '#DCE6E8', '#CCDADB', '#BACDCC', '#AFC4C2', '#8FA9A6'], tree: ['#C7D6D6', '#E6EEEF', '#FFFFFF'], flowers: ['#FFFFFF', '#FFFFFF', '#E9F2F4', '#FFFFFF'], sky: ['#C6D8E4', '#E4EAF0', '#F3EFE6'] },
+    spring: { hills: ['#C9DDB3', '#AFCD96', '#93BC7C', '#79A866', '#6E9C55', '#4F8043'], tree: ['#7DAE5E', '#93BF72', '#F2B8C6'], flowers: ['#F4B6C7', '#FFFFFF', '#D6C38A', '#D98BB0'], sky: ['#C3E3E2', '#E9F0DF', '#F3EDDF'] },
+    summer: { hills: ['#C3D7AE', '#A9C793', '#8DB677', '#79A35F', '#6E9A56', '#4E7E42'], tree: ['#6A9850', '#7DAA5F', '#86B266'], flowers: ['#F0A27E', '#D6C38A', '#FFFFFF', '#D98BB0'], sky: ['#BFE0E0', '#E7EEDD', '#F3EBDB'] },
+    autumn: { hills: ['#CAC8AE', '#C3BE84', '#A9AE6A', '#9A9C58', '#8D8C4E', '#6E7440'], tree: ['#D9843A', '#E8A646', '#C8562E'], flowers: ['#E8A646', '#C8562E', '#D6C38A', '#B8743A'], sky: ['#CFE0DE', '#EAE6DC', '#EEE1CF'] },
+    winter: { hills: ['#E9EEF0', '#DCE6E8', '#CCDADB', '#BACDCC', '#AFC4C2', '#8FA9A6'], tree: ['#C7D6D6', '#E6EEEF', '#FFFFFF'], flowers: ['#FFFFFF', '#FFFFFF', '#E9F2F4', '#FFFFFF'], sky: ['#C6D8E4', '#E4EAF0', '#F0EEE9'] },
   }[S];
   def(`${grainDef}<linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${pal.sky[0]}"/><stop offset="${PC ? .45 : .35}" stop-color="${pal.sky[1]}"/><stop offset="${PC ? .72 : .55}" stop-color="${pal.sky[2]}"/></linearGradient>
   <radialGradient id="sun"><stop offset="0" stop-color="#FFF6D8"/><stop offset=".28" stop-color="#FFEFC0"/><stop offset=".29" stop-color="#FFE7A6" stop-opacity=".55"/><stop offset="1" stop-color="#FFE7A6" stop-opacity="0"/></radialGradient>
@@ -169,8 +169,8 @@ function shire() {
     <path d="M-20,2410 L-20,1820 C120,1780 260,1800 380,1860 C460,1900 520,2000 540,2410 Z" fill="${pal.hills[3]}"/>`);
   // (winter: the hills' palette is already snowy)
   const door = (x, y, r, c, win) => {
-    add('front', `<circle cx="${x}" cy="${y}" r="${r + r * 0.2}" fill="#D9C08E"/><circle cx="${x}" cy="${y}" r="${r}" fill="${c}"/><circle cx="${x}" cy="${y}" r="${r * 0.12}" fill="#E8B84A"/><path d="M${x - r},${y} h${2 * r} M${x},${y - r} v${2 * r}" stroke="#000" stroke-opacity=".12" stroke-width="${r / 20}"/>`);
-    if (win) add('front', `<circle cx="${x + win}" cy="${y - r * 0.18}" r="${r * 0.38}" fill="#D9C08E"/><circle cx="${x + win}" cy="${y - r * 0.18}" r="${r * 0.27}" fill="#FFF1C4"/><path d="M${x + win - r * 0.27},${y - r * 0.18} h${r * 0.54} M${x + win},${y - r * 0.45} v${r * 0.54}" stroke="#D9C08E" stroke-width="${r / 16}"/>`);
+    add('front', `<circle cx="${x}" cy="${y}" r="${r + r * 0.2}" fill="#C8BA9F"/><circle cx="${x}" cy="${y}" r="${r}" fill="${c}"/><circle cx="${x}" cy="${y}" r="${r * 0.12}" fill="#E8B84A"/><path d="M${x - r},${y} h${2 * r} M${x},${y - r} v${2 * r}" stroke="#000" stroke-opacity=".12" stroke-width="${r / 20}"/>`);
+    if (win) add('front', `<circle cx="${x + win}" cy="${y - r * 0.18}" r="${r * 0.38}" fill="#C8BA9F"/><circle cx="${x + win}" cy="${y - r * 0.18}" r="${r * 0.27}" fill="#FFF1C4"/><path d="M${x + win - r * 0.27},${y - r * 0.18} h${r * 0.54} M${x + win},${y - r * 0.45} v${r * 0.54}" stroke="#C8BA9F" stroke-width="${r / 16}"/>`);
   };
   const [dx, dy, ds] = P.door;
   door(dx, dy, 44 * ds, '#2F6B42', -92 * ds);
@@ -180,8 +180,8 @@ function shire() {
   for (let k = 0; k < 4; k++) add('over', STILL
     ? `<circle cx="${cx + 3 * cs + k * 14 * cs}" cy="${cy - 20 * cs - k * 40 * cs}" r="${(9 + k * 5) * cs}" fill="#fff" opacity="${.55 - k * .11}"/>`
     : `<circle class="smoke" style="animation-delay:-${k * 1.25}s" cx="${cx + 3 * cs}" cy="${cy - 20 * cs}" r="${(10 + k * 3) * cs}" fill="#fff" opacity=".5"/>`);
-  add('front', PC ? `<path d="M1060,1090 C1120,1020 1180,975 1240,955" stroke="#E2CC9A" stroke-width="22" fill="none" stroke-linecap="round"/>`
-                  : `<path d="M560,2050 C620,1990 680,1970 740,1962" stroke="#E2CC9A" stroke-width="30" fill="none" stroke-linecap="round"/>`);
+  add('front', PC ? `<path d="M1060,1090 C1120,1020 1180,975 1240,955" stroke="#D2C6AA" stroke-width="22" fill="none" stroke-linecap="round"/>`
+                  : `<path d="M560,2050 C620,1990 680,1970 740,1962" stroke="#D2C6AA" stroke-width="30" fill="none" stroke-linecap="round"/>`);
   if (PC) add('front', `<path d="M640,905 q30,-34 60,0 q30,-30 60,2 q26,-28 52,6 v20 h-172 z" fill="${pal.hills[5]}"/>`);
   const r = rng(5), n = S === 'spring' ? 80 : S === 'winter' ? 0 : 46;
   for (let i = 0; i < n; i++) {
@@ -198,7 +198,7 @@ function shire() {
 // ================================================================ Red Book
 function redbook() {
   const ink = '#5A3F22', red = '#9A2A1C', S = SEASON;
-  def(`${grainDef}<radialGradient id="pap" cx=".5" cy=".42" r=".8"><stop offset="0" stop-color="#F6ECD2"/><stop offset=".6" stop-color="#EDDDB8"/><stop offset="1" stop-color="#D8C192"/></radialGradient>
+  def(`${grainDef}<radialGradient id="pap" cx=".5" cy=".42" r=".8"><stop offset="0" stop-color="#EEE8DA"/><stop offset=".6" stop-color="#E1D8C4"/><stop offset="1" stop-color="#C8BCA2"/></radialGradient>
   <radialGradient id="fire"><stop offset="0" stop-color="#FFB25B" stop-opacity=".55"/><stop offset="1" stop-color="#FFB25B" stop-opacity="0"/></radialGradient>
   <filter id="rough"><feTurbulence baseFrequency=".03" numOctaves="2" seed="2"/><feDisplacementMap in="SourceGraphic" scale="5"/></filter>`);
   add('back', `<rect x="${X0}" y="0" width="${X1 - X0}" height="${H}" fill="url(#pap)"/><g filter="url(#rough)" fill="none" stroke="${ink}" stroke-linecap="round">`);
@@ -260,7 +260,7 @@ function starlit() {
   add('back', `<rect x="${X0}" y="0" width="${X1 - X0}" height="${H}" fill="url(#sky)"/>`);
   add('back', PC ? `<path d="M-300,-40 C700,180 1100,300 2400,600" stroke="url(#mw)" stroke-width="260" fill="none" filter="url(#blur)"/>` : `<path d="M-100,600 C300,800 700,1000 1200,1500" stroke="url(#mw)" stroke-width="300" fill="none" filter="url(#blur)"/>`);
   const r = rng(42), skyH = PC ? 700 : 1500;
-  for (let i = 0; i < (PC ? 720 : 420); i++) { const x = X0 + r() * (X1 - X0), y = Math.pow(r(), 1.3) * skyH, big = r() < .06; add('back', `<circle cx="${f1(x)}" cy="${f1(y)}" r="${big ? 2.4 : f1(.6 + r() * 1.1)}" fill="${r() < .15 ? '#FFE2B0' : r() < .3 ? '#C5D3FF' : '#F4F1E8'}" opacity="${f1(.35 + r() * .6)}"/>`); }
+  for (let i = 0; i < (PC ? 720 : 420); i++) { const x = X0 + r() * (X1 - X0), y = Math.pow(r(), 1.3) * skyH, big = r() < .06; add('back', `<circle cx="${f1(x)}" cy="${f1(y)}" r="${big ? 2.4 : f1(.6 + r() * 1.1)}" fill="${r() < .15 ? '#FFE2B0' : r() < .3 ? '#C5D3FF' : '#F1F0EB'}" opacity="${f1(.35 + r() * .6)}"/>`); }
   for (let i = 0; i < 40; i++) { const x = X0 + r() * (X1 - X0), y = r() * skyH * .6; add('moving', `<circle class="tw" style="animation-duration:${f1(2 + r() * 3.5)}s;animation-delay:-${f1(r() * 5)}s" cx="${f1(x)}" cy="${f1(y)}" r="${f1(1.4 + r() * 1.2)}" fill="#FFF8E6"/>`); }
   const [mx, my, mr] = P.moon;
   add('moving', `<circle class="pulse" cx="${mx}" cy="${my}" r="${mr * 3.2}" fill="url(#moonglow)"/><circle cx="${mx}" cy="${my}" r="${mr}" fill="#FFF3D6"/>`);
@@ -288,17 +288,17 @@ function starlit() {
   add('front', `<circle cx="${kx}" cy="${ky}" r="${90 * ks}" fill="url(#cab)"/><path d="M${kx - 40 * ks},${ky + 25 * ks} v-${34 * ks} l${40 * ks},-${30 * ks} l${40 * ks},${30 * ks} v${34 * ks}z" fill="${pineC}"/>` + (S === 'winter' ? `<path d="M${kx - 44 * ks},${ky - 8 * ks} l${44 * ks},-${32 * ks} l${44 * ks},${32 * ks} l-${8 * ks},0 l-${36 * ks},-${24 * ks} l-${36 * ks},${24 * ks}z" fill="#E8ECFA"/>` : ''));
   add('over', `<g class="flicker"><rect x="${kx - 14 * ks}" y="${ky - 3 * ks}" width="${14 * ks}" height="${14 * ks}" fill="#FFC867"/><rect x="${kx + 6 * ks}" y="${ky - 3 * ks}" width="${14 * ks}" height="${14 * ks}" fill="#FFC867"/></g>`);
   grain('front', .5);
-  return { ink: ['#F4ECD8', '#E2C687', '#9C927B'], shadow: true };
+  return { ink: ['#EEE9DE', '#CEBE9B', '#9C927B'], shadow: true };
 }
 
 // ================================================================ Elven Silver
 function elven() {
   const S = SEASON;
-  const crowns = { spring: ['#B8DCC0', '#D8EED0', '#F2D4DE'], summer: ['#8FC4C6', '#B9DADB', '#D8E9D0'], autumn: ['#E3C05A', '#F0D888', '#D8A040'], winter: ['#DCE8EC', '#F2F7F8', '#C6D8DE'] }[S];
+  const crowns = { spring: ['#B8DCC0', '#D8EED0', '#F2D4DE'], summer: ['#8FC4C6', '#B9DADB', '#D8E9D0'], autumn: ['#E3C05A', '#D9CB9F', '#D8A040'], winter: ['#DCE8EC', '#F2F7F8', '#C6D8DE'] }[S];
   def(`${grainDef}<linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#06090C"/><stop offset=".6" stop-color="#0E1A20"/><stop offset="1" stop-color="#173039"/></linearGradient>
   <linearGradient id="fall" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#DDF2F6" stop-opacity=".9"/><stop offset="1" stop-color="#DDF2F6" stop-opacity="0"/></linearGradient>
   <radialGradient id="glow"><stop offset="0" stop-color="#BFE3EC" stop-opacity=".5"/><stop offset="1" stop-color="#BFE3EC" stop-opacity="0"/></radialGradient>
-  <radialGradient id="lampglow"><stop offset="0" stop-color="#F3E3B4" stop-opacity=".45"/><stop offset="1" stop-color="#F3E3B4" stop-opacity="0"/></radialGradient>
+  <radialGradient id="lampglow"><stop offset="0" stop-color="#E5DCC2" stop-opacity=".45"/><stop offset="1" stop-color="#E5DCC2" stop-opacity="0"/></radialGradient>
   <linearGradient id="mist" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9FC7D0" stop-opacity="0"/><stop offset=".5" stop-color="#9FC7D0" stop-opacity=".22"/><stop offset="1" stop-color="#9FC7D0" stop-opacity="0"/></linearGradient>
   <linearGradient id="knoll" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${S === 'winter' ? '#C9D8DC' : '#2E5A57'}"/><stop offset="${PC ? .08 : .06}" stop-color="${S === 'winter' ? '#8FA9AE' : '#1D3D3C'}"/><stop offset="1" stop-color="#0E1E20"/></linearGradient>`);
   add('back', `<rect x="${X0}" y="0" width="${X1 - X0}" height="${H}" fill="url(#sky)"/>`);
@@ -330,7 +330,7 @@ function elven() {
   (PC ? [[720, 906, 330, 10, .55], [860, 890, 420, 13, .7], [1010, 880, 520, 16, .9], [1160, 884, 450, 14, .8], [1300, 894, 360, 11, .65], [620, 930, 260, 8, .45], [1400, 912, 280, 8, .5]]
       : [[300, 1960, 420, 12, .6], [450, 1910, 560, 16, .85], [620, 1900, 620, 18, .95], [780, 1930, 480, 14, .75], [200, 2010, 320, 9, .45], [880, 1990, 340, 10, .5]]).forEach(a => tree(...a));
   const lamps = PC ? [[880, 760], [1030, 700], [1180, 740], [960, 820], [1110, 800], [1250, 830], [760, 820]] : [[420, 1700], [560, 1600], [700, 1680], [500, 1800], [640, 1780], [330, 1820]];
-  lamps.forEach(([x, y], i) => add('moving', `<circle class="lamp" style="animation-duration:${3 + i % 3}s;animation-delay:-${i * .9}s" cx="${x}" cy="${y}" r="${PC ? 22 : 28}" fill="url(#lampglow)"/><circle cx="${x}" cy="${y}" r="${PC ? 4.5 : 6}" fill="#F3E3B4"/>`));
+  lamps.forEach(([x, y], i) => add('moving', `<circle class="lamp" style="animation-duration:${3 + i % 3}s;animation-delay:-${i * .9}s" cx="${x}" cy="${y}" r="${PC ? 22 : 28}" fill="url(#lampglow)"/><circle cx="${x}" cy="${y}" r="${PC ? 4.5 : 6}" fill="#E5DCC2"/>`));
   for (let i = 0; i < 18; i++) { const x = PC ? 640 + r() * 760 : 200 + r() * 700, y = PC ? 900 + r() * 120 : 1950 + r() * 200; add('moving', `<circle class="rise" style="animation-duration:${f1(9 + r() * 8)}s;animation-delay:-${f1(r() * 16)}s" cx="${f1(x)}" cy="${f1(y)}" r="2" fill="#DCEBF0"/>`); }
   if (PC) add('mid', `<path d="M560,1090 C700,1010 900,990 1100,996 S1420,1030 1460,1090Z" fill="#132A30" opacity=".85"/>`);
   // (winter: the knoll's own colours turn snowy)

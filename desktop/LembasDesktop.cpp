@@ -13,6 +13,7 @@
 //
 //   LembasDesktop.exe          start (does nothing if it is already running)
 //   LembasDesktop.exe --quit   stop the running copy
+//   LembasDesktop.exe --reload the running copy re-reads lembas.json (after a sync)
 
 #ifndef UNICODE
 #define UNICODE
@@ -141,6 +142,8 @@ static ComPtr<IDXGISwapChain1> gSwap;
 static ComPtr<ID2D1Bitmap1> gTarget;
 static ComPtr<ID2D1SolidColorBrush> gBrush;
 static HWND gWnd, gMsgWnd, gParent;
+static bool gSaver = false;   // running as the screensaver (Lembas.scr /s): our own full-screen window
+static HWND gSaverWnd;
 static int gCanvasW, gCanvasH;
 static std::wstring gDir;  // folder with the exe and the scene layers
 static double gT0;
@@ -291,7 +294,13 @@ static double gLatitude = 0;
 // Today's weather, from weather.json (Lembas Sun fetches it hourly when weather is on):
 // 0 clear, 1 cloudy, 2 fog, 3 rain, 4 snow, 5 storm.
 static int gWx = 0;
+static bool gWind = false;     // a windy day (over 30 km/h): the clouds race and the smoke leans
 static bool gRescene = false;  // the season or the weather changed: rebuild the scene
+// The light of the hour (worked out once a minute): a tint over the whole scene, and the glow of
+// sunrise and sunset rising from the horizon. 0 = none.
+static uint32_t gTintCol = 0; static float gTintA = 0, gGlowA = 0;
+static float gMoonAlt = 1;     // how high tonight's moon is (0 horizon .. 1), below 0 when it has set
+static bool gFullMoon = false, gMeteors = false;
 
 // --- shared pieces
 struct Glow : Element {  // a soft round light that breathes
@@ -327,7 +336,10 @@ struct Cloud : Element {
     Cloud(float x0, float y_, float s, float o, float d, uint32_t c = 0xFFFFFF) : y(y_), sc(s), dur(d), op(o), col(c) {
         off = (x0 + 700) / 3900 * d;  // starts where the design puts it
     }
-    D2D1_MATRIX_3X2_F M(double t) { return Matrix3x2F::Scale(sc, sc) * Matrix3x2F::Translation(-700 + 3900 * Phase(t, dur, off), y); }
+    D2D1_MATRIX_3X2_F M(double t) {
+        float d = gWind ? dur / 4 : dur;
+        return Matrix3x2F::Scale(sc, sc) * Matrix3x2F::Translation(-700 + 3900 * Phase(t, d, off * d / dur), y);
+    }
     D2D1_RECT_F Bounds(double t) override { return Inflate(TransformRect(RectF(-92, -66, 112, 28), M(t)), 2); }
     void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
         gCtx->SetTransform(M(t) * art);
@@ -344,7 +356,7 @@ struct Smoke : Element {  // a puff rising from the chimney
     Smoke(float x_, float y_, float r_, float o) : x(x_), y(y_), r(r_), off(o) {}
     void State(double t, float& cx, float& cy, float& cr, float& o) {
         float p = Phase(t, 5, off), k = Apply(EASE_OUT, p);
-        cx = x + 50 * k; cy = y - 200 * k; cr = r * (.6f + 1.3f * k); o = op(p);
+        cx = x + (gWind ? 170 : 50) * k; cy = y - (gWind ? 120 : 200) * k; cr = r * (.6f + 1.3f * k); o = op(p);
     }
     D2D1_RECT_F Bounds(double t) override { float a, b, c, o; State(t, a, b, c, o); return Circle(a, b, c + 1); }
     void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
@@ -451,7 +463,7 @@ struct Shooting : Element {
     }
     bool State(double t, float& o, D2D1_MATRIX_3X2_F& m) {
         if (t < 3) return false;
-        float p = Phase(t - 3, 11, 0);
+        float p = Phase(t - 3, gMeteors ? 5.f : 11.f, 0);
         o = op(p);
         if (o < .01f) return false;
         m = Matrix3x2F::Rotation(-24, Point2F(1100, 110)) * Matrix3x2F::Translation(tx(p), ty(p));
@@ -470,16 +482,22 @@ struct Shooting : Element {
         gCtx->FillRectangle(RectF(1100, 110, 1250, 112), tail.Get());
     }
 };
-struct Moon : Element {  // tonight's real phase, lit on the right side for your hemisphere
-    float cx, cy, r;
+struct Moon : Element {  // tonight's real phase, lit on the right side for your hemisphere, where it really is
+    float cx, cy, r, baseY;
+    static ComPtr<ID2D1RadialGradientBrush> glow;
     ComPtr<ID2D1PathGeometry> lit;
     bool flip = false;
     int day = -1;
-    Moon(float x, float y, float rr) : cx(x), cy(y), r(rr) { still = true; }
+    float lastAlt = -9;
+    Moon(float x, float y, float rr) : cx(x), cy(y), r(rr), baseY(y) { still = true; }
     void Update() {
         SYSTEMTIME st; GetLocalTime(&st);
-        if (st.wDay == day && lit) return;
+        float wantY = baseY + (1 - std::max(0.f, gMoonAlt)) * 330;
+        if (st.wDay == day && lit && lastAlt == gMoonAlt) return;
+        lastAlt = gMoonAlt;
         day = st.wDay;
+        cy = wantY;
+        r = gFullMoon ? 54 * 1.25f : 54;
         FILETIME ft; GetSystemTimeAsFileTime(&ft);
         double ms = ((double)(((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime) - 116444736000000000.0) / 10000.0;
         double ph = std::fmod((ms - 947182440000.0) / 864e5 / 29.530588853, 1.0);
@@ -490,9 +508,12 @@ struct Moon : Element {  // tonight's real phase, lit on the right side for your
         lit = Path(d);
         flip = (ph > .5) != (gLatitude < 0);
     }
-    D2D1_RECT_F Bounds(double) override { return Circle(cx, cy, r + 1); }
+    D2D1_RECT_F Bounds(double) override { Update(); return gMoonAlt <= 0 ? Empty() : Circle(cx, cy, r * 3.3f + 1); }
     void Draw(double, const D2D1_MATRIX_3X2_F& art) override {
         Update();
+        if (gMoonAlt <= 0) return;   // set: not in the sky tonight
+        gCtx->SetTransform(art);
+        FillGlow(glow.Get(), cx, cy, r * 3.2f * (gFullMoon ? 1.3f : 1), r * 3.2f * (gFullMoon ? 1.3f : 1), .9f);
         gCtx->SetTransform(art);
         Solid(0x2A3058, 1);
         gCtx->FillEllipse(Ellipse(Point2F(cx, cy), r, r), gBrush.Get());
@@ -501,6 +522,7 @@ struct Moon : Element {  // tonight's real phase, lit on the right side for your
         gCtx->FillGeometry(lit.Get(), gBrush.Get());
     }
 };
+ComPtr<ID2D1RadialGradientBrush> Moon::glow;
 struct CabinWindow : Element {  // the cabin's lit windows, flickering now and then
     float x, y;
     CabinWindow(float x_, float y_) : x(x_), y(y_) { slow = true; rate = 10; }
@@ -583,6 +605,78 @@ struct Flake : Element {  // snow: a flake drifting down
         gCtx->SetTransform(art);
         Solid(0xFFFFFF, .85f);
         gCtx->FillEllipse(Ellipse(a, r, r), gBrush.Get());
+    }
+};
+
+// --- The light of the hour, over everything (redrawn whenever it changes, at most once a minute)
+struct Light : Element {
+    ComPtr<ID2D1LinearGradientBrush> glow;
+    Light() {
+        still = true;
+        D2D1_GRADIENT_STOP st[3] = { {0, Hex(0xFF8A5C, .55f)}, {.5f, Hex(0xF2789A, .28f)}, {1, Hex(0xF2789A, 0)} };
+        ComPtr<ID2D1GradientStopCollection> c;
+        gCtx->CreateGradientStopCollection(st, 3, &c);
+        gCtx->CreateLinearGradientBrush(LinearGradientBrushProperties(Point2F(0, 1080), Point2F(0, 380)), c.Get(), &glow);
+    }
+    D2D1_RECT_F Bounds(double) override { return RectF(ART_L - 4, -4, ART_R + 4, 1084); }
+    void Draw(double, const D2D1_MATRIX_3X2_F& art) override {
+        gCtx->SetTransform(art);
+        if (gTintA > 0) { Solid(gTintCol, gTintA); gCtx->FillRectangle(Bounds(0), gBrush.Get()); }
+        if (gGlowA > 0) { glow->SetOpacity(gGlowA); gCtx->FillRectangle(Bounds(0), glow.Get()); }
+    }
+};
+
+// --- Now and then (for a minute, eight times a day, at different times each day) a visitor:
+// a fox trotting over the Shire, a boat crossing the starlit lake, an owl blinking in Rivendell.
+static int VisitorShift() { SYSTEMTIME st; GetLocalTime(&st); return (int)(((unsigned long long)(st.wYear * 372 + st.wMonth * 31 + st.wDay) * 2654435761ULL) % 180); }
+struct Visitor : Element {
+    int kind;  // 0 fox, 1 boat, 2 owl
+    ComPtr<ID2D1PathGeometry> body;
+    explicit Visitor(int k) : kind(k) {
+        smooth = k != 2;
+        body = Path(k == 0 ? "M-30,0 C-24,-8 -8,-10 4,-6 L12,-12 L14,-4 C18,-2 20,2 16,4 L6,4 C2,8 -8,8 -16,6 C-22,10 -30,10 -34,6 C-28,6 -26,4 -30,0 Z"
+                         : k == 1 ? "M-26,-4 L26,-4 L18,6 L-18,6 Z M8,-4 L8,-28 L10,-28 L10,-4 Z M10,-26 L22,-10 L10,-10 Z"
+                                  : "M-12,0 C-12,-20 12,-20 12,0 C12,18 -12,18 -12,0 Z");
+    }
+    // seconds into this visitor's minute, or -1
+    static double Into() {
+        SYSTEMTIME st; GetLocalTime(&st);
+        int m = st.wHour * 60 + st.wMinute;
+        if ((m + VisitorShift()) % 180 != 0) return -1;
+        return st.wSecond + st.wMilliseconds / 1000.0;
+    }
+    bool At(double, float& x, float& y, float& o) {
+        double s = Into();
+        if (s < 0) return false;
+        float p = (float)(s / 60);
+        o = 1;
+        if (kind == 0) { x = -560 + 3000 * p; y = 1000 - 8 * std::fabs(std::sin(p * 60)); }
+        else if (kind == 1) { x = 1150 + 520 * p; y = 838; }
+        else { x = 690; y = 760; o = std::min(1.f, std::min(p, 1 - p) * 8); }
+        return true;
+    }
+    D2D1_RECT_F Bounds(double t) override { float x, y, o; if (!At(t, x, y, o)) return Empty(); return RectF(x - 40, y - 40, x + 40, y + 30); }
+    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
+        float x, y, o; if (!At(t, x, y, o)) return;
+        gCtx->SetTransform(Matrix3x2F::Translation(x, y) * art);
+        if (kind == 0) {
+            Solid(0xD9733A, 1); gCtx->FillGeometry(body.Get(), gBrush.Get());
+            float k = std::sin((float)(Into() / 60) * 120) * 4;
+            Solid(0x8A3E1A, 1);
+            gCtx->DrawLine(Point2F(-14, 8), Point2F(-16 + k, 20), gBrush.Get(), 2.6f, Glint::gRound.Get());
+            gCtx->DrawLine(Point2F(14, 8), Point2F(16 - k, 20), gBrush.Get(), 2.6f, Glint::gRound.Get());
+            Solid(0xF4EFE4, 1); gCtx->FillEllipse(Ellipse(Point2F(-30, 2), 4, 4), gBrush.Get());
+        } else if (kind == 1) {
+            Solid(0x0E0C28, 1); gCtx->FillGeometry(body.Get(), gBrush.Get());
+            Solid(0xFFC867, .25f); gCtx->FillEllipse(Ellipse(Point2F(10, -22), 10, 10), gBrush.Get());
+            Solid(0xFFC867, 1); gCtx->FillEllipse(Ellipse(Point2F(10, -22), 3.5f, 3.5f), gBrush.Get());
+        } else {
+            Solid(0x2E3A40, o); gCtx->FillGeometry(body.Get(), gBrush.Get());
+            bool blink = std::fmod(Into(), 4.0) < .25;
+            Solid(0xF3E3B4, o);
+            if (blink) { gCtx->FillRectangle(RectF(-8, -6, -2, -5), gBrush.Get()); gCtx->FillRectangle(RectF(2, -6, 8, -5), gBrush.Get()); }
+            else { gCtx->FillEllipse(Ellipse(Point2F(-5, -6), 3.4f, 3.4f), gBrush.Get()); gCtx->FillEllipse(Ellipse(Point2F(5, -6), 3.4f, 3.4f), gBrush.Get()); }
+        }
     }
 };
 
@@ -676,7 +770,6 @@ static Scene* BuildScene(SceneId id) {
             E.push_back(t);
         }
         E.push_back(new Shooting());
-        E.push_back(new Glow(1480, 230, 173, { {0, Hex(0xFFF7E0, .55f)}, {1, Hex(0xFFF7E0, 0)} }, 7));
         E.push_back(new Moon(1480, 230, 54));
         const float g[6][3] = { {-80, 0, 160}, {-60, 28, 120}, {-44, 58, 88}, {-30, 94, 60}, {-20, 136, 40}, {-12, 186, 24} };
         for (int i = 0; i < 6; i++) E.push_back(new Glint(1480 + g[i][0], 812 + g[i][1], g[i][2], 3 + i * .5f, i * .6f, 4, 0xFFF3D6));
@@ -699,12 +792,17 @@ static Scene* BuildScene(SceneId id) {
         s->layers = { 0, 1 };
     }
     AddWeather(E, id);
+    if (id == SHIRE) E.push_back(new Visitor(0));
+    if (id == STARLIT) E.push_back(new Visitor(1));
+    if (id == ELVEN) E.push_back(new Visitor(2));
+    if (id != REDBOOK) E.push_back(new Light());
     return s;
 }
 
 static void InitShared() {
     gFactory->CreateStrokeStyle(StrokeStyleProperties(D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_LINE_JOIN_ROUND), nullptr, 0, &Glint::gRound);
     Lamp::glow = Radial({ {0, Hex(0xF3E3B4, .45f)}, {1, Hex(0xF3E3B4, 0)} });
+    Moon::glow = Radial({ {0, Hex(0xFFF7E0, .55f)}, {1, Hex(0xFFF7E0, 0)} });
     // cloud = one shape (so overlapping puffs don't double up their transparency)
     ComPtr<ID2D1RoundedRectangleGeometry> rr;
     ComPtr<ID2D1EllipseGeometry> c1, c2, c3;
@@ -718,11 +816,11 @@ static void InitShared() {
     Cloud::shape = grp;
 }
 static void ReleaseShared() {
-    Glint::gRound.Reset(); Lamp::glow.Reset(); Cloud::shape.Reset();
+    Glint::gRound.Reset(); Lamp::glow.Reset(); Cloud::shape.Reset(); Moon::glow.Reset();
 }
 
 // ------------------------------------------------------------------------------------ settings
-struct Settings { bool clock = true, meals = true, enabled = true, adaptive = true, modern = true, weather = true; double lat = -33.87, lon = 151.21; std::wstring look = L"adaptive"; } gSet;
+struct Settings { bool clock = true, meals = true, enabled = true, adaptive = true, modern = true, weather = true, span = true, pinned = false; double lat = -33.87, lon = 151.21; std::wstring look = L"adaptive"; } gSet;
 
 static std::wstring ReadAll(const std::wstring& path) {
     HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
@@ -767,6 +865,8 @@ static void LoadSettings() {
     gSet.meals = !(JsonValue(j, L"meals", v) && v == L"false");
     gSet.enabled = !(JsonValue(j, L"livingDesktop", v) && v == L"false");
     gSet.weather = !(JsonValue(j, L"weather", v) && v == L"false");
+    gSet.span = !(JsonValue(j, L"spanScreens", v) && v == L"false");      // one view across side-by-side screens
+    gSet.pinned = JsonValue(j, L"panelPinned", v) && v == L"true";        // keep today's panel on the desktop
     gLatitude = gSet.lat;
 }
 static SceneId gForced = NONE;  // --look <name>: for testing one look
@@ -815,6 +915,41 @@ static SunDay SunToday(const SYSTEMTIME& now, double lat, double lon) {
     auto clampMin = [](double m) { return std::min(1439, std::max(0, (int)m)); };
     return { clampMin(noon - 4 * ha), clampMin(noon), clampMin(noon + 4 * he), clampMin(noon + 4 * ha) };
 }
+// The light of the hour, the moon's height and the night's events: worked out once a minute.
+// Returns true if anything visible changed (then the whole scene is redrawn once).
+static bool UpdateLight(int scene) {
+    SYSTEMTIME st; GetLocalTime(&st);
+    SunDay d = SunToday(st, gSet.lat, gSet.lon);
+    int m = st.wHour * 60 + st.wMinute;
+    uint32_t col = 0; float a = 0, g = 0;
+    if (scene == 0) {        // Shire: warmer as the afternoon goes on
+        float f = std::min(1.f, std::max(0.f, (float)(m - d.noon) / std::max(1, d.evening - d.noon)));
+        col = 0xFFB45A; a = .10f * f;
+    } else if (scene == 2) { // Starlit: deeper toward 11pm and in the small hours
+        int fromDusk = m - d.set; if (fromDusk < 0) fromDusk += 1440;
+        int toDawn = d.rise - m; if (toDawn < 0) toDawn += 1440;
+        col = 0x050A26; a = .25f * std::min(1.f, std::min(fromDusk, toDawn) / 150.f);
+    }
+    if (scene != 1) {        // sunrise and sunset: a glow from the horizon
+        int nearMin = std::min(std::abs(m - d.rise), std::abs(m - d.set));
+        if (nearMin < 20) g = 1 - nearMin / 20.f;
+    }
+    // the moon: it crosses the sky about 50 minutes later each day (with the sun at new moon, at midnight when full)
+    FILETIME ft; GetSystemTimeAsFileTime(&ft);
+    double ms = ((double)(((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime) - 116444736000000000.0) / 10000.0;
+    double ph = std::fmod((ms - 947182440000.0) / 864e5 / 29.530588853, 1.0); if (ph < 0) ph += 1;
+    double transit = d.noon + ph * 1490;
+    double hours = std::fmod((m - transit) / 60.0 + 36, 24.84) - 12.42;
+    float alt = std::min(1.f, (float)std::cos(hours / 24.84 * 2 * PI) * 1.4f - .15f);
+    alt = std::round(alt * 40) / 40;   // moves in small steps (a redraw each ~15 minutes)
+    bool full = ph > .46 && ph < .54;
+    bool meteors = (st.wMonth == 8 && st.wDay >= 11 && st.wDay <= 13) || (st.wMonth == 12 && st.wDay >= 13 && st.wDay <= 15);
+    a = std::round(a * 100) / 100; g = std::round(g * 20) / 20;
+    bool changed = col != gTintCol || a != gTintA || g != gGlowA || alt != gMoonAlt || full != gFullMoon;
+    gTintCol = col; gTintA = a; gGlowA = g; gMoonAlt = alt; gFullMoon = full; gMeteors = meteors;
+    return changed;
+}
+
 static SceneId SunScene(const SYSTEMTIME& now) {
     SunDay d = SunToday(now, gSet.lat, gSet.lon);
     int m = now.wHour * 60 + now.wMinute;
@@ -826,18 +961,22 @@ static SceneId SunScene(const SYSTEMTIME& now) {
 // The weather Lembas Sun saved (weather.json: {"wx": 0..5, "at": unix seconds}); clear if it's off,
 // missing or more than four hours old.
 static int ReadWeather() {
+    gWind = false;
     if (!gSet.weather) return 0;
     wchar_t base[MAX_PATH];
     GetEnvironmentVariableW(L"LOCALAPPDATA", base, MAX_PATH);
     std::wstring j = ReadAll(std::wstring(base) + L"\\Lembas\\weather.json"), v;
     if (!JsonValue(j, L"wx", v)) return 0;
     int wx = _wtoi(v.c_str());
+    std::wstring wv;
+    bool wind = JsonValue(j, L"wind", wv) && _wtoi(wv.c_str()) > 30;
     std::wstring at;
     if (JsonValue(j, L"at", at)) {
         FILETIME ft; GetSystemTimeAsFileTime(&ft);
         double now = ((double)(((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime) - 116444736000000000.0) / 1e7;
         if (now - _wtof(at.c_str()) > 4 * 3600) return 0;
     }
+    gWind = wind;
     return std::min(5, std::max(0, wx));
 }
 
@@ -850,7 +989,9 @@ static void CheckSun() {
     lastMinute = minute;
     if (++sinceReload >= 10) { sinceReload = 0; LoadSettings(); }  // the time zone (and so the city) may have changed
     gWx = ReadWeather();
-    if (gScene && (gScene->season != SeasonNow() || gScene->weather != gWx)) gRescene = true;
+    static bool lastWind = false;
+    if (gScene && (gScene->season != SeasonNow() || gScene->weather != gWx || gWind != lastWind)) gRescene = true;
+    lastWind = gWind;
     if (!gSet.adaptive || gForced != NONE) return;
     SceneId want = SunScene(st), shown = SceneFromWallpaper();
     if (shown == NONE || want == shown) return;
@@ -916,9 +1057,12 @@ static ComPtr<ID2D1Bitmap1> LoadLayer(const std::wstring& file, UINT w, UINT h) 
     return bmp;
 }
 static void LoadLayers() {
-    for (auto& m : gMons) {
+    bool shared = gSet.span && gMons.size() > 1;   // one panorama across the screens: load it once
+    for (size_t k = 0; k < gMons.size(); k++) {
+        auto& m = gMons[k];
         for (auto& l : m.layer) l.Reset();
         if (!gScene) continue;
+        if (shared && k > 0) { for (int i = 0; i < 3; i++) m.layer[i] = gMons[0].layer[i]; continue; }
         for (int i : gScene->layers) {
             std::wstring ext = i == 0 ? L".jpg" : L".png";
             std::wstring name = std::wstring(kSceneKey[gScene->id]) + L"-" + kLayerName[i] + ext;
@@ -1346,7 +1490,9 @@ static void ReleaseDevice() {
 }
 
 // ------------------------------------------------------------------------------------ rendering
-static int gFps = 24;  // frames a second (24 on mains power, 12 on battery)
+static int gFps = 24;  // frames a second (24 on mains power, 8 on battery)
+static bool gBattery = false;
+static ULONGLONG gPauseUntil = 0;  // "Hold still for an hour" (the tray)
 static long long gStatFrames = 0, gStatPixels = 0;  // for the once-a-minute power report
 static std::vector<RECT> gPrevDirty;   // what changed in the previous frame (the other buffer lacks it)
 static int gFullFrames = 2;            // full repaints still needed (one per buffer)
@@ -1414,7 +1560,7 @@ static bool Render(bool animate, bool clockChanged, const D2D1_RECT_F& oldClock)
     for (auto* e : gScene->els) {
         if (e->layer >= 0) continue;
         if (e->still) { if (IsEmpty(e->now)) e->now = e->Bounds(0); continue; }
-        double r = e->slow ? e->rate : e->smooth ? gFps * 2.5 : gFps;
+        double r = e->slow ? e->rate : (e->smooth && !gBattery) ? gFps * 2.5 : gFps;
         double q = std::floor(t * r) / r;
         if (e->q < 0 || ((animate || full) && q != e->q)) { e->q = q; e->now = e->Bounds(q); moved.push_back(e); }
     }
@@ -1498,6 +1644,15 @@ static void Layout() {
     SetWindowPos(gWnd, nullptr, 0, 0, gCanvasW, gCanvasH, SWP_NOZORDER | SWP_NOACTIVATE);
     gMons.clear();
     EnumDisplayMonitors(nullptr, nullptr, MonEnum, 0);
+    // One view across your screens: the panorama laid over all of them together (like looking
+    // through two windows side by side), instead of the same picture on each.
+    if (gSet.span && gMons.size() > 1) {
+        RECT u = gMons[0].rc;
+        for (auto& m : gMons) UnionRect(&u, &u, &m.rc);
+        Mon all{};
+        SetupMon(all, u);
+        for (auto& m : gMons) { m.art = all.art; m.org = all.org; m.bw = all.bw; m.bh = all.bh; }
+    }
 }
 
 static void Detach() {
@@ -1516,7 +1671,7 @@ static LRESULT CALLBACK CanvasProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 
 static bool Attach() {
     Detach();
-    gParent = FindDesktopHost();
+    gParent = gSaver ? gSaverWnd : FindDesktopHost();
     if (!gParent) return false;
     wchar_t pc[64] = {}; GetClassNameW(gParent, pc, 64);
     Log(L"attaching to %s %p", pc, (void*)gParent);
@@ -1530,6 +1685,7 @@ static bool Attach() {
     return true;
 }
 
+static void PinPanel();
 static void Rebuild() {  // device, swap chain, scene, layers and clock for the current state
     if (!gD3D && !CreateDevice()) return;
     if (!gAttached && !Attach()) return;
@@ -1542,14 +1698,17 @@ static void Rebuild() {  // device, swap chain, scene, layers and clock for the 
     for (auto& m : gMons) Log(L"monitor %ld,%ld %ldx%ld%s scene %s layers %d %d %d", m.rc.left, m.rc.top, m.rc.right - m.rc.left, m.rc.bottom - m.rc.top,
                               m.primary ? L" (main)" : L"", kSceneKey[gWanted], (int)!!m.layer[0], (int)!!m.layer[1], (int)!!m.layer[2]);
     BuildClock(gWanted);
+    UpdateLight(gWanted);
     gClockMinute = -1;
     gPrevDirty.clear();
     gFullFrames = 2;
+    PinPanel();
 }
 
 static void Stop() {
     Detach();
     ReleaseDevice();
+    if (gSaver) return;
     // let Explorer repaint its own wallpaper where we were
     wchar_t wall[MAX_PATH * 2] = {};
     SystemParametersInfoW(SPI_GETDESKWALLPAPER, MAX_PATH * 2, wall, 0);
@@ -1583,13 +1742,17 @@ static void CheckConditions() {
     std::vector<bool> covered(gMons.size(), false);
     if (!gMons.empty()) EnumWindows(CoverEnum, (LPARAM)&covered);
     gCovered = !gMons.empty() && std::all_of(covered.begin(), covered.end(), [](bool b) { return b; });
+    // a game, a film or a presentation full screen on any monitor: hold still (nothing to see, nothing to spend)
+    QUERY_USER_NOTIFICATION_STATE qs;
+    if (!gSaver && SUCCEEDED(SHQueryUserNotificationState(&qs)) && (qs == QUNS_RUNNING_D3D_FULL_SCREEN || qs == QUNS_BUSY || qs == QUNS_PRESENTATION_MODE)) gCovered = true;
     SYSTEM_POWER_STATUS ps;
     bool saver = false, battery = false;
     if (GetSystemPowerStatus(&ps)) { saver = (ps.SystemStatusFlag & 1) != 0; battery = ps.ACLineStatus == 0; }
     // Only Battery saver holds the scene still. (Windows' "Animation effects" switch is often off
     // just to make menus snappier; Lembas's own tray switch turns the moving scene off.)
-    gStill = saver;
-    gFps = battery ? 12 : 24;
+    gStill = saver || GetTickCount64() < gPauseUntil;
+    gBattery = battery;
+    gFps = battery ? 8 : 24;   // on battery: fewer frames, and the fast movers don't get extra ones
 }
 static bool Visible() { return gAttached && gScene && !gLocked && !gDisplayOff && !gCovered; }
 
@@ -1659,7 +1822,43 @@ static void RunScript(const wchar_t* script, const std::wstring& args, bool visi
 
 enum { IDM_ADAPTIVE = 100, IDM_SHIRE, IDM_REDBOOK, IDM_STARLIT, IDM_ELVEN,
        IDM_MODERN = 200, IDM_CLASSIC, IDM_NOCLOCK, IDM_SCENE, IDM_MEALS, IDM_WEATHER,
-       IDM_PREVIEW = 300, IDM_UPDATE, IDM_UNINSTALL };
+       IDM_SPAN, IDM_PIN, IDM_PAUSE, IDM_SAVER,
+       IDM_PREVIEW = 300, IDM_UPDATE, IDM_UNINSTALL, IDM_SYNC };
+
+// Lembas as the screensaver (the scene and the clock, full screen): set or cleared in your Windows settings.
+static std::wstring SaverPath() { return LembasDir() + L"\\Living\\Lembas.scr"; }
+static bool SaverOn() {
+    wchar_t v[MAX_PATH * 2] = {}; DWORD n = sizeof v;
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Control Panel\\Desktop", L"SCRNSAVE.EXE", RRF_RT_REG_SZ, nullptr, v, &n) != ERROR_SUCCESS) return false;
+    return _wcsicmp(v, SaverPath().c_str()) == 0;
+}
+static void SetSaver(bool on) {
+    HKEY k;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Control Panel\\Desktop", 0, KEY_SET_VALUE, &k) != ERROR_SUCCESS) return;
+    if (on) {
+        // the screensaver is this program under a .scr name (Windows runs it with /s)
+        wchar_t self[MAX_PATH]; GetModuleFileNameW(nullptr, self, MAX_PATH);
+        CopyFileW(self, SaverPath().c_str(), FALSE);
+        std::wstring p = SaverPath();
+        RegSetValueExW(k, L"SCRNSAVE.EXE", 0, REG_SZ, (const BYTE*)p.c_str(), (DWORD)((p.size() + 1) * 2));
+        RegSetValueExW(k, L"ScreenSaveActive", 0, REG_SZ, (const BYTE*)L"1", 4);
+        wchar_t cur[16] = {}; DWORD n = sizeof cur;
+        if (RegGetValueW(HKEY_CURRENT_USER, L"Control Panel\\Desktop", L"ScreenSaveTimeOut", RRF_RT_REG_SZ, nullptr, cur, &n) != ERROR_SUCCESS || !_wtoi(cur))
+            RegSetValueExW(k, L"ScreenSaveTimeOut", 0, REG_SZ, (const BYTE*)L"600", 8);   // after 10 minutes
+    } else {
+        RegDeleteValueW(k, L"SCRNSAVE.EXE");
+        RegSetValueExW(k, L"ScreenSaveActive", 0, REG_SZ, (const BYTE*)L"0", 4);
+    }
+    RegCloseKey(k);
+    SystemParametersInfoW(SPI_SETSCREENSAVEACTIVE, on, nullptr, SPIF_SENDCHANGE);
+}
+
+// Signed in to sync with your phone and watch (through your Google account)?
+static bool SyncSignedIn() {
+    wchar_t base[MAX_PATH] = {};
+    GetEnvironmentVariableW(L"APPDATA", base, MAX_PATH);
+    return GetFileAttributesW((std::wstring(base) + L"\\Lembas\\google-token.dat").c_str()) != INVALID_FILE_ATTRIBUTES;
+}
 
 static void TrayMenu() {
     HMENU m = CreatePopupMenu(), clock = CreatePopupMenu();
@@ -1679,6 +1878,13 @@ static void TrayMenu() {
     AppendMenuW(m, MF_STRING | check(gSet.enabled), IDM_SCENE, L"Moving desktop scene");
     AppendMenuW(m, MF_STRING | check(gSet.meals), IDM_MEALS, L"Hobbit mealtimes");
     AppendMenuW(m, MF_STRING | check(gSet.weather), IDM_WEATHER, L"Weather in the scene");
+    AppendMenuW(m, MF_STRING | check(GetTickCount64() < gPauseUntil), IDM_PAUSE, L"Hold the scene still for an hour");
+    AppendMenuW(m, MF_STRING | check(gSet.pinned), IDM_PIN, L"Keep today's panel on the desktop");
+    if (gMons.size() > 1) AppendMenuW(m, MF_STRING | check(gSet.span), IDM_SPAN, L"One view across your screens");
+    AppendMenuW(m, MF_STRING | check(SaverOn()), IDM_SAVER, L"Lembas as the screensaver");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    bool synced = SyncSignedIn();
+    AppendMenuW(m, MF_STRING | check(synced), IDM_SYNC, synced ? L"Sync with your phone (on)" : L"Sync with your phone...");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, IDM_PREVIEW, L"Preview the four looks");
     AppendMenuW(m, MF_STRING, IDM_UPDATE, L"Check for updates");
@@ -1704,14 +1910,25 @@ static void TrayMenu() {
         if (!gSet.weather) ShellExecuteW(nullptr, L"open", L"schtasks.exe", L"/Run /TN \"\\Lembas\\Lembas Sun\"", nullptr, SW_HIDE);  // fetch it now
         gRescene = true;
         break;
+    case IDM_PAUSE: gPauseUntil = GetTickCount64() < gPauseUntil ? 0 : GetTickCount64() + 3600ULL * 1000; CheckConditions(); break;
+    case IDM_PIN: SetConfig(L"panelPinned", gSet.pinned ? L"false" : L"true"); break;
+    case IDM_SPAN: SetConfig(L"spanScreens", gSet.span ? L"false" : L"true"); gReattach = true; break;
+    case IDM_SAVER: SetSaver(!SaverOn()); break;
     case IDM_PREVIEW: RunScript(L"Preview-Lembas.ps1", L"", true); break;
     case IDM_UPDATE: RunScript(L"Update-Lembas.ps1", L"", true); break;
     case IDM_UNINSTALL: RunScript(L"Uninstall-Lembas.ps1", L"", true); break;
+    case IDM_SYNC:
+        if (!SyncSignedIn()) RunScript(L"Lembas-Sync.ps1", L"-SignIn", true);
+        else if (MessageBoxW(nullptr, L"Stop keeping this PC's look in step with your phone and watch?\n\nLembas forgets the Google sign-in on this PC.",
+                             L"Lembas", MB_YESNO | MB_ICONQUESTION) == IDYES) RunScript(L"Lembas-Sync.ps1", L"-SignOut -Quiet", false);
+        break;
     }
+    if (cmd >= IDM_MODERN && cmd < IDM_PREVIEW && SyncSignedIn()) RunScript(L"Lembas-Sync.ps1", L"-Quiet", false);   // tell your other devices
     if (cmd >= IDM_MODERN && cmd < IDM_PREVIEW) {   // settings changed: apply them now
         LoadSettings();
         gClockMinute = -1;
         gReload = true;
+        PinPanel();
     }
 }
 
@@ -1723,6 +1940,7 @@ static const GUID kDisplayState = { 0x6fe69556, 0x704a, 0x47a0, { 0x8f, 0x24, 0x
 // Click the desktop clock: a small panel with today's sun, when the look changes next, and the
 // Shire calendar for the week ahead. Click anywhere else (or press Esc) to close it.
 #define WM_LEMBAS_PANEL (WM_APP + 8)
+#define WM_LEMBAS_RELOAD (WM_APP + 9)   // settings changed elsewhere (sync): read them again
 static HWND gPanel;
 static HHOOK gMouseHook;
 static ComPtr<ID2D1HwndRenderTarget> gPanelRT;
@@ -1885,7 +2103,9 @@ static LRESULT CALLBACK PanelProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     }
     return DefWindowProcW(h, m, w, l);
 }
+static bool gPanelChild = false;   // the panel is pinned to the desktop (part of it, not a popup)
 static void ShowPanel(POINT at) {
+    if (gPanelChild) return;           // pinned: it's already there
     if (gPanel) { DestroyWindow(gPanel); return; }
     if (OnDesktopIcon(at)) return;
     PanelContent(gWanted);
@@ -1916,6 +2136,44 @@ static void ShowPanel(POINT at) {
     ShowWindow(gPanel, SW_SHOW);
     SetForegroundWindow(gPanel);
 }
+// Keep today's panel on the desktop: the same panel, drawn into the desktop under your icons, below
+// the clock, refreshed each minute.
+static void PinPanel() {
+    bool want = gSet.pinned && gSet.clock && gAttached && gClock.bmp && IsWindow(gParent);
+    if (!want) { if (gPanelChild && gPanel) DestroyWindow(gPanel); gPanelChild = false; return; }
+    if (gPanel && !gPanelChild) DestroyWindow(gPanel);   // a popup was open: swap it for the pinned one
+    PanelContent(gWanted);
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSW wc = {};
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.lpfnWndProc = [](HWND h, UINT m, WPARAM w, LPARAM l) -> LRESULT {
+            if (m == WM_PAINT) { PAINTSTRUCT ps; BeginPaint(h, &ps); PaintPanel(); EndPaint(h, &ps); return 0; }
+            if (m == WM_NCHITTEST) return HTTRANSPARENT;
+            if (m == WM_DESTROY) { gPanel = nullptr; gPanelRT.Reset(); gPanelChild = false; return 0; }
+            return DefWindowProcW(h, m, w, l);
+        };
+        wc.lpszClassName = L"LembasPinnedPanel";
+        RegisterClassW(&wc);
+        registered = true;
+    }
+    float s = GetDpiForSystem() / 96.f, width;
+    float height = PanelHeight(s, width);
+    int x = (int)gClock.rc.left + (int)(24 * s), y = (int)gClock.rc.bottom + (int)(8 * s);
+    if (!gPanel) {
+        gPanel = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TRANSPARENT, L"LembasPinnedPanel", L"Lembas today", WS_CHILD | WS_CLIPSIBLINGS,
+                                 x, y, (int)width, (int)height, gParent, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (!gPanel) return;
+        gPanelChild = true;
+        SetWindowPos(gPanel, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        ShowWindow(gPanel, SW_SHOWNA);
+    } else {
+        SetWindowPos(gPanel, HWND_TOP, x, y, (int)width, (int)height, SWP_NOACTIVATE);
+        gPanelRT.Reset();
+    }
+    InvalidateRect(gPanel, nullptr, FALSE);
+}
+
 static void UpdateMouseHook() {
     bool want = gSet.clock && gAttached;
     if (want && !gMouseHook) gMouseHook = SetWindowsHookExW(WH_MOUSE_LL, MouseLL, GetModuleHandleW(nullptr), 0);
@@ -1927,6 +2185,8 @@ static LRESULT CALLBACK MsgProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
     case WM_LEMBAS_PANEL:
         ShowPanel(POINT{ (LONG)w, (LONG)l }); return 0;
+    case WM_LEMBAS_RELOAD:
+        LoadSettings(); gClockMinute = -1; gReload = true; gRescene = true; return 0;
     case WM_LEMBAS_TRAY:
         if (LOWORD(l) == WM_RBUTTONUP || LOWORD(l) == WM_LBUTTONUP || LOWORD(l) == WM_CONTEXTMENU) TrayMenu();
         return 0;
@@ -2029,9 +2289,20 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int) {
         }
         return 0;
     }
+    if (cmd && wcsstr(cmd, L"--reload")) {   // the running copy re-reads its settings (after a sync)
+        if (HWND other = FindWindowW(L"LembasDesktopMsg", nullptr)) PostMessageW(other, WM_LEMBAS_RELOAD, 0, 0);
+        return 0;
+    }
+    // As the screensaver (Lembas.scr): /s shows it, /p (the small preview) and /c (settings) do nothing much.
+    if (cmd && (wcsstr(cmd, L"/c") || wcsstr(cmd, L"/C") || wcsstr(cmd, L"-c"))) {
+        MessageBoxW(nullptr, L"The Lembas screensaver shows the look of the hour, moving, with its clock.\n\nChoose it (or not) from the Lembas icon by the clock.", L"Lembas", MB_OK | MB_ICONINFORMATION);
+        return 0;
+    }
+    if (cmd && (wcsstr(cmd, L"/p") || wcsstr(cmd, L"/P"))) return 0;
+    gSaver = cmd && (wcsstr(cmd, L"/s") || wcsstr(cmd, L"/S"));
     bool snapshot = cmd && wcsstr(cmd, L"--snapshot");
-    HANDLE mutex = snapshot ? nullptr : CreateMutexW(nullptr, TRUE, L"Local\\LembasDesktop");
-    if (!snapshot && GetLastError() == ERROR_ALREADY_EXISTS) return 0;
+    HANDLE mutex = (snapshot || gSaver) ? nullptr : CreateMutexW(nullptr, TRUE, L"Local\\LembasDesktop");
+    if (!snapshot && !gSaver && GetLastError() == ERROR_ALREADY_EXISTS) return 0;
 
     typedef BOOL(WINAPI * DpiFn)(DPI_AWARENESS_CONTEXT);
     if (auto f = (DpiFn)GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetProcessDpiAwarenessContext")) f(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -2072,11 +2343,42 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int) {
     wc.lpfnWndProc = MsgProc;
     wc.lpszClassName = L"LembasDesktopMsg";
     RegisterClassW(&wc);
-    gMsgWnd = CreateWindowExW(WS_EX_TOOLWINDOW, L"LembasDesktopMsg", L"Lembas Desktop", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, inst, nullptr);
-    gTaskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
-    WTSRegisterSessionNotification(gMsgWnd, NOTIFY_FOR_THIS_SESSION);
-    RegisterPowerSettingNotification(gMsgWnd, &kDisplayState, DEVICE_NOTIFY_WINDOW_HANDLE);
-    TrayAdd();
+    if (gSaver) {
+        // the screensaver: one window over all screens; any key, click or real mouse move ends it
+        wc.lpfnWndProc = [](HWND h, UINT m, WPARAM w, LPARAM l) -> LRESULT {
+            static POINT first = { -1, -1 };
+            switch (m) {
+            case WM_MOUSEMOVE: {
+                POINT p = { (short)LOWORD(l), (short)HIWORD(l) };
+                if (first.x < 0) { first = p; return 0; }
+                if (std::abs(p.x - first.x) > 8 || std::abs(p.y - first.y) > 8) PostQuitMessage(0);
+                return 0;
+            }
+            case WM_KEYDOWN: case WM_SYSKEYDOWN: case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN: PostQuitMessage(0); return 0;
+            case WM_SETCURSOR: SetCursor(nullptr); return TRUE;
+            case WM_ACTIVATEAPP: if (!w) PostQuitMessage(0); return 0;
+            }
+            return DefWindowProcW(h, m, w, l);
+        };
+        wc.lpszClassName = L"LembasSaver";
+        wc.hCursor = nullptr;
+        RegisterClassW(&wc);
+        int vx = GetSystemMetrics(SM_XVIRTUALSCREEN), vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        gSaverWnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"LembasSaver", L"Lembas", WS_POPUP | WS_VISIBLE,
+                                    vx, vy, GetSystemMetrics(SM_CXVIRTUALSCREEN), GetSystemMetrics(SM_CYVIRTUALSCREEN), nullptr, nullptr, inst, nullptr);
+        SetForegroundWindow(gSaverWnd);
+        wc.lpfnWndProc = MsgProc;
+        wc.lpszClassName = L"LembasSaverMsg";
+        RegisterClassW(&wc);
+        gMsgWnd = CreateWindowExW(WS_EX_TOOLWINDOW, L"LembasSaverMsg", L"Lembas", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, inst, nullptr);
+    } else {
+        if (SaverOn()) { wchar_t self[MAX_PATH]; GetModuleFileNameW(nullptr, self, MAX_PATH); CopyFileW(self, SaverPath().c_str(), FALSE); }   // keep the screensaver up to date
+        gMsgWnd = CreateWindowExW(WS_EX_TOOLWINDOW, L"LembasDesktopMsg", L"Lembas Desktop", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, inst, nullptr);
+        gTaskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
+        WTSRegisterSessionNotification(gMsgWnd, NOTIFY_FOR_THIS_SESSION);
+        RegisterPowerSettingNotification(gMsgWnd, &kDisplayState, DEVICE_NOTIFY_WINDOW_HANDLE);
+        TrayAdd();
+    }
 
     HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
     if (!timer) timer = CreateWaitableTimerW(nullptr, FALSE, nullptr);
@@ -2098,6 +2400,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int) {
         if (gReload || gReattach) {
             LoadSettings();
             SceneId want = gSet.enabled ? SceneFromWallpaper() : NONE;
+            if (gSaver) { SYSTEMTIME st; GetLocalTime(&st); want = SceneFromWallpaper(); if (want == NONE) want = SunScene(st); }
             bool changed = want != gWanted || gReattach || (gWanted != NONE && !gAttached);
             gWanted = want;
             Log(L"wallpaper look: %s", gWanted == NONE ? L"(not Lembas)" : kSceneKey[gWanted]);
@@ -2141,6 +2444,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int) {
             if (minute != gClockMinute) {
                 if (gClockMinute >= 0 && minute / 1440 != gClockMinute / 1440) gFullFrames = 2;  // new day: new moon phase
                 BuildClock(gWanted); gClockMinute = minute; clockChanged = true;
+                if (UpdateLight(gWanted)) gFullFrames = std::max(gFullFrames, 1);
+                PinPanel();
             }
             if (clockChanged || gFullFrames > 0 || (animate && now >= nextFrame)) {
                 if (!Render(animate, clockChanged, oldClock)) { ReleaseDevice(); gAttached = false; gReattach = true; Detach(); continue; }

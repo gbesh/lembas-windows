@@ -7,6 +7,12 @@
 param([switch]$NoPause)
 $ErrorActionPreference = 'Continue'
 $Dest = Join-Path $env:LOCALAPPDATA 'Lembas'
+# the Lembas screensaver, if it was chosen
+$saver = (Get-ItemProperty 'HKCU:\Control Panel\Desktop' -Name 'SCRNSAVE.EXE' -ErrorAction SilentlyContinue).'SCRNSAVE.EXE'
+if ($saver -and $saver -like '*\Lembas\Living\Lembas.scr') {
+    Remove-ItemProperty 'HKCU:\Control Panel\Desktop' -Name 'SCRNSAVE.EXE' -ErrorAction SilentlyContinue
+    Set-ItemProperty 'HKCU:\Control Panel\Desktop' -Name 'ScreenSaveActive' -Value '0' -ErrorAction SilentlyContinue
+}
 
 Add-Type -Namespace LembasU -Name Native -MemberDefinition @'
 [DllImport("user32.dll", EntryPoint = "SystemParametersInfoW", CharSet = CharSet.Unicode, SetLastError = true)]

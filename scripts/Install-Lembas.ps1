@@ -291,10 +291,11 @@ foreach ($s in @(
         @{ name = 'Lembas - Preview the four looks'; script = 'Preview-Lembas.ps1'; icon = 'Icons\favorites.ico' },
         @{ name = 'Lembas - Change look'; script = 'Change-Look.ps1'; icon = 'Icons\pictures.ico' },
         @{ name = 'Lembas - Update'; script = 'Update-Lembas.ps1'; icon = 'Icons\downloads.ico' },
+        @{ name = 'Lembas - Sync with your phone'; script = 'Lembas-Sync.ps1'; args = '-SignIn'; icon = 'Icons\network.ico' },
         @{ name = 'Lembas - Uninstall'; script = 'Uninstall-Lembas.ps1'; icon = 'Icons\recycle-empty.ico' })) {
     $lnk = $shell.CreateShortcut((Join-Path $menu ($s.name + '.lnk')))
     $lnk.TargetPath = $ps
-    $lnk.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $Dest ('Tools\' + $s.script))`""
+    $lnk.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $Dest ('Tools\' + $s.script))`" $($s.args)"
     $lnk.IconLocation = Join-Path $Dest $s.icon
     $lnk.WorkingDirectory = $Dest
     $lnk.Save()
