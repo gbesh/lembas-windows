@@ -39,9 +39,13 @@ UNINSTALL: one click
 
 WHAT CHANGES
 ----------------------------------------------------------------------
-  Wallpaper and lock screen   a 4K scene for each look
-  Desktop (Lembas Desktop)    the scene moves gently behind your icons, with the time, the Shire
-                              date, the Quenya hour and the hobbit mealtime
+  Wallpaper and lock screen   a wide 4K panorama for each look, in each of the four seasons
+  Sign-in screen              the look's picture, clear instead of blurred
+  Desktop (Lembas Desktop)    the scene moves gently behind your icons (clouds, smoke, the fire,
+                              stars, the real moon, lanterns, waterfalls), with the weather
+                              outside if you like; the clock in the corner shows the day, time,
+                              mealtime and Shire date; click it for sunrise, sunset, the next
+                              look and the week ahead
   Light / dark mode           light by day, dark by night
   Accent colour               green, red, gold or silver with the look (selection, toggles, title bars)
   Taskbar                     tinted glass with a star-in-a-ring Start button
@@ -75,10 +79,20 @@ GOOD TO KNOW
    If you change time zone, Lembas follows. To use your own location instead, run Install
    Lembas from a terminal with  -Latitude <yours> -Longitude <yours>.
  - The Lembas icon by the clock (bottom right; it may be under the ^ arrow) changes the look,
-   the desktop clock (Modern, Classic or off), the moving scene and the mealtimes, and has
+   the desktop clock (Modern, Classic or off), the moving scene, the weather and the mealtimes, and has
    Preview, Check for updates and Uninstall.
  - The desktop clock's Modern style uses the same type as the phone launcher and the watch face:
-   the hours heavy in the look's colour over the minutes, with the date and the Shire date.
+   the day, then the time (heavy hours, light minutes), the mealtime and the Shire date, in the
+   top-left corner. Click it for a small panel: today's sunrise and sunset, when the look
+   changes next and the week ahead.
+ - Seasons: each scene has spring, summer, autumn and winter versions (flipped south of the
+   equator), and the wallpaper and desktop change with them.
+ - Weather in the scene: rain, snow, fog or heavy cloud over the Shire, the lake and Rivendell
+   (never indoors by the fire). It asks Open-Meteo (free, no account) about your time zone's
+   main city at most once an hour; nothing else is sent. Tray menu > Weather in the scene
+   turns it off, and then nothing is fetched.
+ - Wide screens: the panoramas are drawn wider than 16:9, so ultrawide monitors and several
+   screens side by side see more of the scene instead of a crop.
  - Lembas Desktop starts the sun task at the exact minute a look changes. The task also checks
    every 10 minutes, at sign-in and when you unlock, and does nothing unless the look should
    change.
@@ -97,6 +111,7 @@ GOOD TO KNOW
 CREDITS
 ----------------------------------------------------------------------
  Art, icons, cursors and sounds: made for Lembas.
+ Weather: Open-Meteo (open-meteo.com, CC BY 4.0).
  Fonts (SIL Open Font License, licences in the Fonts folder): Cinzel (Natanael Gama),
    Cormorant Garamond (Christian Thalmann), Alegreya (Huerta Tipografica), IM Fell English
    (Igino Marini), Fraunces (Undercase Type), Alegreya Sans (Huerta Tipografica).

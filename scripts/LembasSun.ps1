@@ -5,8 +5,8 @@
   nothing unless the look should change, so it costs a fraction of a second. On a change it sets
   the wallpaper, lock screen, light/dark mode, accent colour and the Windhawk styles together.
 
-    Shire Morning   sunrise -> midday    light   sage and green ink
-    Red Book        midday  -> sunset    light   parchment and red ink
+    Shire Morning   sunrise -> late aft. light   sage and green ink
+    Red Book        late aft.-> sunset    light   parchment and red ink
     Starlit Night   sunset  -> 11pm      dark    midnight and gold   (and 4am -> sunrise)
     Elven Silver    11pm    -> 4am       dark    black-blue and silver
 #>

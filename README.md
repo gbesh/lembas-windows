@@ -11,13 +11,19 @@ A Middle-earth theme for Windows 11 that follows the sun, in four looks:
 
 The looks change at the same minute as the Lembas phone launcher and watch face (same sunrise and sunset sums, from your time zone's main city). Each look sets the wallpaper, lock screen, light/dark mode and accent colour, and recolours the taskbar, Start menu, notification centre, File Explorer, Settings, window borders and the copy window. There's also a Lembas icon set (parchment folio folders, chest drives, a round-door This PC, a palantír for the network, a barrel Recycle Bin), cursors with the One Ring as the busy cursor, a harp-and-bell sound scheme and Windows Terminal colours. Text stays in the normal Windows font; the Lembas typefaces are used for headings and the clock.
 
-**Lembas Desktop** brings the phone's home screen to the desktop: the look's scene moves gently behind your icons (twinkling stars and the real moon phase, drifting clouds and chimney smoke, a candle-lit map with a flickering campfire, a silver glint travelling the elven arch), with the time, the Shire date, the Quenya hour and the hobbit mealtime. It's a small native program written for Lembas (`desktop/LembasDesktop.cpp`: Direct2D, no browser, no other tools). It's built to be easy on the battery:
+**Lembas Desktop** brings the phone's home screen to the desktop. Each look is a wide panorama drawn for PC screens (not a stretched phone picture): the Shire with its round green door, a map by the fire, a lakeside cabin under the stars, and Rivendell's silver trees and waterfalls. They move gently behind your icons: clouds and chimney smoke, glints on the river and lake, a flickering campfire and a swaying compass needle, twinkling stars, a shooting star and the real moon phase, lanterns, mist and falling water. The scenes change with the **seasons** (blossom in spring, autumn leaves, snow and a bare tree in winter, flipped for the southern hemisphere) and, if you like, with the **weather** outside (rain, snow, fog or heavy cloud). On ultrawide and multi-monitor setups the panorama widens to fill each screen instead of cropping. The clock sits in the corner: the day, the time, the hobbit mealtime and the Shire date. **Click it** for a small panel with the date, today's sunrise and sunset, when the look changes next and the week ahead.
 
-- The still parts of each scene are pre-rendered, so it only redraws the few small things that move (usually under 5% of the screen).
+It's a small native program written for Lembas (`desktop/LembasDesktop.cpp`: Direct2D, no browser, no other tools). It's built to be easy on the battery:
+
+- The still parts of each scene are pre-rendered in layers, so it only redraws the few small things that move (usually under 5% of the screen).
 - It draws 24 frames a second on mains power and 12 on battery.
 - It stops completely when windows cover the desktop, the screen is off or locked, Battery saver is on, or Windows' *Animation effects* are off. The clock still turns over each minute.
 
-The **Lembas icon by the clock** (in the system tray) changes the look, the desktop clock (**Modern**, in the same type as the phone launcher and watch face; **Classic**; or off), the moving scene and the mealtimes, and has Preview, Check for updates and Uninstall. Start > Lembas > Change look does the same from a menu.
+The weather comes from [Open-Meteo](https://open-meteo.com) (free, no account), asked about your time zone's main city at most once an hour; nothing else is sent. Turn it off in the tray menu and nothing is fetched.
+
+The **sign-in screen** matches too: it shows the look's picture clearly instead of a blurred one (the setting is put back when you uninstall).
+
+The **Lembas icon by the clock** (in the system tray) changes the look, the desktop clock (**Modern**, in the same type as the phone launcher and watch face; **Classic**; or off), the moving scene, the weather and the mealtimes, and has Preview, Check for updates and Uninstall. Start > Lembas > Change look does the same from a menu.
 
 ## Install: one click
 
