@@ -134,8 +134,35 @@ if (-not ($config.PSObject.Properties['livingDesktop'] -and -not $config.livingD
     Start-Process explorer.exe -ArgumentList "`"$desktopExe`""
 }
 
+# ------------------------------------------------------------------ the weather (hourly, if it's on)
+# One small request to the free Open-Meteo service for your time zone's city (no location
+# permission); Lembas Desktop draws rain, snow, fog or cloud over the scene from weather.json.
+function Update-Weather {
+    $file = Join-Path $Dest 'weather.json'
+    if ($config.PSObject.Properties['weather'] -and -not $config.weather) { Remove-Item $file -ErrorAction SilentlyContinue; return }
+    if ((Test-Path $file) -and ((Get-Date) - (Get-Item $file).LastWriteTime).TotalMinutes -lt 55) { return }
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $lat = ([double]$config.latitude).ToString([Globalization.CultureInfo]::InvariantCulture)
+        $lon = ([double]$config.longitude).ToString([Globalization.CultureInfo]::InvariantCulture)
+        $w = Invoke-RestMethod "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=weather_code" -TimeoutSec 15
+        $code = [int]$w.current.weather_code
+        # WMO codes -> 0 clear, 1 cloudy, 2 fog, 3 rain, 4 snow, 5 storm
+        $wx = if ($code -le 1) { 0 } elseif ($code -le 3) { 1 } elseif ($code -le 48) { 2 } elseif ($code -le 67 -or ($code -ge 80 -and $code -le 82)) { 3 } `
+              elseif ($code -le 77 -or $code -eq 85 -or $code -eq 86) { 4 } else { 5 }
+        $at = [int][double]::Parse((Get-Date -UFormat %s), [Globalization.CultureInfo]::InvariantCulture)
+        Set-Content -Path $file -Value "{ `"wx`": $wx, `"code`": $code, `"at`": $at }" -Encoding UTF8
+    } catch { Log "  weather: $($_.Exception.Message)" }
+}
+Update-Weather
+
+# The season, by the month and the hemisphere (the same rule as the phone and the watch)
+$north = @('winter', 'winter', 'spring', 'spring', 'spring', 'summer', 'summer', 'summer', 'autumn', 'autumn', 'autumn', 'winter')[(Get-Date).Month - 1]
+$season = if ([double]$config.latitude -lt 0) { @{ winter = 'summer'; summer = 'winter'; spring = 'autumn'; autumn = 'spring' }[$north] } else { $north }
+
 $l = $looks.$phase
-$wallpaper = Join-Path $Dest ("Wallpapers\" + $l.wallpaper)
+$wallpaper = Join-Path $Dest ("Wallpapers\Seasons\$season\" + $l.wallpaper)
+if (-not (Test-Path $wallpaper)) { $wallpaper = Join-Path $Dest ("Wallpapers\" + $l.wallpaper) }
 $currentWall = (Get-ItemProperty 'HKCU:\Control Panel\Desktop' -ErrorAction SilentlyContinue).WallPaper
 if (-not $Force -and $state.phase -eq $phase -and $currentWall -eq $wallpaper) { exit 0 }
 

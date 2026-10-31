@@ -123,6 +123,18 @@ if ($Mode -eq 'Install') {
     Register-ScheduledTask -TaskPath $taskPath -TaskName $taskName -Action $action -Trigger $triggers -Principal $principal `
         -Settings $settings -Description 'Lembas: switches Windows between Shire Morning, Red Book, Starlit Night and Elven Silver with the sun.' -Force | Out-Null
 
+    # ---------------------------------------------------------- the sign-in screen
+    # Windows shows the lock screen picture (the current Lembas scene) behind the password box;
+    # make sure that's on and that it isn't blurred, so sign-in matches. Undone on uninstall.
+    $pol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System'
+    if (-not (Test-Path $pol)) { New-Item -Path $pol -Force | Out-Null }
+    if ($null -eq $state.signInBefore) {
+        $before = Get-ItemProperty $pol -ErrorAction SilentlyContinue
+        Set-StateValue 'signInBefore' ([pscustomobject]@{ acrylic = $before.DisableAcrylicBackgroundOnLogon; image = $before.DisableLogonBackgroundImage })
+    }
+    Set-ItemProperty -Path $pol -Name 'DisableAcrylicBackgroundOnLogon' -Value 1 -Type DWord
+    Set-ItemProperty -Path $pol -Name 'DisableLogonBackgroundImage' -Value 0 -Type DWord
+
     # ---------------------------------------------------------- apply the look for right now, then refresh Explorer
     Log "Applying the look for right now"
     & $sun -Force
@@ -133,6 +145,14 @@ if ($Mode -eq 'Install') {
 
 if ($Mode -eq 'Uninstall') {
     Unregister-ScheduledTask -TaskPath $taskPath -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    # the sign-in screen back to how it was
+    $pol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System'
+    if ($null -ne $state.signInBefore) {
+        foreach ($p in @(@('DisableAcrylicBackgroundOnLogon', $state.signInBefore.acrylic), @('DisableLogonBackgroundImage', $state.signInBefore.image))) {
+            if ($null -eq $p[1]) { Remove-ItemProperty -Path $pol -Name $p[0] -ErrorAction SilentlyContinue }
+            else { Set-ItemProperty -Path $pol -Name $p[0] -Value $p[1] -Type DWord }
+        }
+    }
     if (Test-Path $cli) {
         $mods = Get-Content (Join-Path $Dest 'Windhawk\mods.json') -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
         $ours = @($mods.install | ForEach-Object { $_.mod }) + @($mods.retire)

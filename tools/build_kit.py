@@ -90,6 +90,16 @@ def emblem(path, size=128):
     im.resize((size, size), Image.LANCZOS).save(path)
 
 
+def widescreen(path):
+    """The middle 16:9 of a panorama wallpaper (the part a normal screen shows), at 1920x1080."""
+    im = Image.open(path).convert("RGB")
+    w = round(im.height * 16 / 9)
+    if im.width > w:
+        x = (im.width - w) // 2
+        im = im.crop((x, 0, x + w, im.height))
+    return im.resize((1920, 1080), Image.LANCZOS)
+
+
 def home_art(wall_dir, out_dir):
     """Backgrounds for File Explorer's Home page, one per look, toned so text stays readable:
     the day scenes washed toward parchment, the night scenes deepened toward their ink."""
@@ -97,7 +107,7 @@ def home_art(wall_dir, out_dir):
     tone = {"shire": ((242, 244, 228), 0.6, 0.75), "redbook": ((246, 236, 212), 0.6, 0.75),
             "starlit": ((8, 11, 26), 0.3, 1.0), "elven": ((9, 12, 15), 0.3, 1.0)}
     for key, (rgb, amount, colour) in tone.items():
-        im = Image.open(wall_dir / f"{NAMES[key]}.jpg").convert("RGB").resize((1920, 1080), Image.LANCZOS)
+        im = widescreen(wall_dir / f"{NAMES[key]}.jpg")
         im = ImageEnhance.Color(im).enhance(colour)
         im = Image.blend(im, Image.new("RGB", im.size, rgb), amount)
         im.save(out_dir / f"home-{key}.jpg", quality=86)
@@ -106,7 +116,7 @@ def home_art(wall_dir, out_dir):
 def browser_theme(folder, title, wallpaper, colors, tints):
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "images").mkdir(exist_ok=True)
-    Image.open(wallpaper).convert("RGB").resize((1920, 1080), Image.LANCZOS).save(folder / "images" / "ntp.jpg", quality=88)
+    widescreen(wallpaper).save(folder / "images" / "ntp.jpg", quality=88)
     manifest = {
         "manifest_version": 3,
         "name": title,

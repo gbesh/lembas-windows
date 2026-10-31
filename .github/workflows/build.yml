@@ -64,7 +64,7 @@ jobs:
             t=${pair%%:*}; n=${pair##*:}
             /tmp/llvm-mingw/bin/$t-w64-mingw32-clang++ -std=c++17 -O2 -municode -mwindows -static -Wall -Wno-missing-braces \
               -o assets/desktop/LembasDesktop-$n.exe desktop/LembasDesktop.cpp \
-              -ld2d1 -ldwrite -ld3d11 -ldxgi -lwindowscodecs -ldwmapi -lwtsapi32 -lole32 -luuid -lshell32
+              -ld2d1 -ldwrite -ld3d11 -ldxgi -lwindowscodecs -ldwmapi -lwtsapi32 -lole32 -luuid -lshell32 -loleacc -loleaut32
             /tmp/llvm-mingw/bin/llvm-strip assets/desktop/LembasDesktop-$n.exe
           done
           ls -la assets/desktop
@@ -84,6 +84,7 @@ jobs:
           cd out && zip -qr ../Lembas-for-Windows.zip "Lembas for Windows"
 
       - name: Publish the release (installed copies update themselves from the newest one)
+        if: github.ref == 'refs/heads/main'   # test branches build the kit without publishing it
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

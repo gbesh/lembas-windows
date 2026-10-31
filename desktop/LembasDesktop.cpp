@@ -32,6 +32,7 @@
 #include <dwmapi.h>
 #include <wtsapi32.h>
 #include <shellapi.h>
+#include <oleacc.h>
 #include <wrl/client.h>
 #include <cmath>
 #include <cctype>
@@ -279,180 +280,93 @@ struct Element {
 
 struct LayerEl : Element {
     explicit LayerEl(int i) { layer = i; still = true; }
-    D2D1_RECT_F Bounds(double) override { return RectF(0, 0, 1920, 1080); }
+    D2D1_RECT_F Bounds(double) override { return RectF(-480, 0, 2400, 1080); }
     void Draw(double, const D2D1_MATRIX_3X2_F&) override {}  // drawn by the renderer (per monitor bitmaps)
 };
 
-// --- Starlit Night
-struct Twinkle : Element {
-    float x, y, r, dur, off; uint32_t col;
-    Track op{ {0, .45f, .6f, 1}, {.12f, 1, .85f, .12f}, EASE_IN_OUT };
-    Track sc{ {0, .45f, .6f, 1}, {.6f, 1.3f, 1, .6f}, EASE_IN_OUT };
-    D2D1_RECT_F Bounds(double) override { return Circle(x, y, r * 1.3f + 1); }
+// The artboard: the 1920x1080 design, with 480 more on each side that wider screens show.
+static const float ART_L = -480, ART_R = 2400;
+
+static double gLatitude = 0;
+// Today's weather, from weather.json (Lembas Sun fetches it hourly when weather is on):
+// 0 clear, 1 cloudy, 2 fog, 3 rain, 4 snow, 5 storm.
+static int gWx = 0;
+static bool gRescene = false;  // the season or the weather changed: rebuild the scene
+
+// --- shared pieces
+struct Glow : Element {  // a soft round light that breathes
+    ComPtr<ID2D1RadialGradientBrush> b;
+    float x, y, r, dur, off, s0, s1, o0, o1;
+    Glow(float x_, float y_, float r_, std::initializer_list<D2D1_GRADIENT_STOP> stops, float d, float of = 0,
+         float sMin = 1, float sMax = 1.08f, float oMin = .8f, float oMax = 1)
+        : b(Radial(stops)), x(x_), y(y_), r(r_), dur(d), off(of), s0(sMin), s1(sMax), o0(oMin), o1(oMax) { slow = true; rate = 8; }
+    float K(double t) { float p = Phase(t, dur, off); return .5f - .5f * std::cos(2 * PI * p); }
+    D2D1_RECT_F Bounds(double) override { return Circle(x, y, r * s1 + 2); }
     void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
-        float p = Phase(t, dur, off);
+        float k = Apply(EASE_IN_OUT, K(t)), s = s0 + (s1 - s0) * k;
         gCtx->SetTransform(art);
-        Solid(col, op(p));
-        gCtx->FillEllipse(Ellipse(Point2F(x, y), r * sc(p), r * sc(p)), gBrush.Get());
+        FillGlow(b.Get(), x, y, r * s, r * s, o0 + (o1 - o0) * k);
     }
 };
-struct Spark : Element {
-    float x, y, dur, off;
-    static ComPtr<ID2D1PathGeometry> shape;
-    static ComPtr<ID2D1RadialGradientBrush> glow;
-    Track sc{ {0, .5f, 1}, {.35f, 1, .35f}, EASE_IN_OUT };
-    Track rot{ {0, .5f, 1}, {0, 20, 0}, EASE_IN_OUT };
-    Track op{ {0, .5f, 1}, {.2f, 1, .2f}, EASE_IN_OUT };
-    D2D1_RECT_F Bounds(double) override { return Circle(x, y, 17); }
+struct Glint : Element {  // a short line of light on water that comes and goes
+    float x, y, w, dur, off, width; uint32_t col;
+    Glint(float x_, float y_, float w_, float d, float o, float wd, uint32_t c) : x(x_), y(y_), w(w_), dur(d), off(o), width(wd), col(c) {}
+    D2D1_RECT_F Bounds(double) override { return RectF(x - 16 - width, y - width, x + w + 16 + width, y + width); }
     void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
-        float p = Phase(t, dur, off), s = sc(p), o = op(p);
+        float p = Phase(t, dur, off), k = .5f - .5f * std::cos(2 * PI * p), dx = -14 + 28 * p;
         gCtx->SetTransform(art);
-        FillGlow(glow.Get(), x, y, 9 * s + 7, 9 * s + 7, o * .55f);
-        gCtx->SetTransform(Matrix3x2F::Scale(s, s) * Matrix3x2F::Rotation(rot(p)) * Matrix3x2F::Translation(x, y) * art);
-        Solid(0xFFF8E6, o);
+        Solid(col, .85f * k);
+        gCtx->DrawLine(Point2F(x + dx, y), Point2F(x + dx + w, y), gBrush.Get(), width, gRound.Get());
+    }
+    static ComPtr<ID2D1StrokeStyle> gRound;
+};
+ComPtr<ID2D1StrokeStyle> Glint::gRound;
+struct Cloud : Element {
+    static ComPtr<ID2D1Geometry> shape;
+    float y, sc, dur, off, op; uint32_t col;
+    Cloud(float x0, float y_, float s, float o, float d, uint32_t c = 0xFFFFFF) : y(y_), sc(s), dur(d), op(o), col(c) {
+        off = (x0 + 700) / 3900 * d;  // starts where the design puts it
+    }
+    D2D1_MATRIX_3X2_F M(double t) { return Matrix3x2F::Scale(sc, sc) * Matrix3x2F::Translation(-700 + 3900 * Phase(t, dur, off), y); }
+    D2D1_RECT_F Bounds(double t) override { return Inflate(TransformRect(RectF(-92, -66, 112, 28), M(t)), 2); }
+    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
+        gCtx->SetTransform(M(t) * art);
+        Solid(col, op);
         gCtx->FillGeometry(shape.Get(), gBrush.Get());
     }
 };
-ComPtr<ID2D1PathGeometry> Spark::shape;
-ComPtr<ID2D1RadialGradientBrush> Spark::glow;
+ComPtr<ID2D1Geometry> Cloud::shape;
 
-struct Shooting : Element {
-    ComPtr<ID2D1LinearGradientBrush> tail;
-    Track op{ {0, .86f, .88f, .96f, 1}, {0, 0, 1, 0, 0}, LINEAR };
-    Track tx{ {0, .86f, .96f, 1}, {0, 0, -560, 0}, LINEAR };
-    Track ty{ {0, .86f, .96f, 1}, {0, 0, 250, 0}, LINEAR };
-    Shooting() {
-        smooth = true;
-        D2D1_GRADIENT_STOP st[2] = { {0, Hex(0xFFF4D8, .95f)}, {1, Hex(0xFFF4D8, 0)} };
-        ComPtr<ID2D1GradientStopCollection> c;
-        gCtx->CreateGradientStopCollection(st, 2, &c);
-        gCtx->CreateLinearGradientBrush(LinearGradientBrushProperties(Point2F(1500, 110), Point2F(1650, 110)), c.Get(), &tail);
+// --- Shire Morning
+struct Smoke : Element {  // a puff rising from the chimney
+    float x, y, r, off;
+    Track op{ {0, .15f, 1}, {0, .6f, 0}, EASE_OUT };
+    Smoke(float x_, float y_, float r_, float o) : x(x_), y(y_), r(r_), off(o) {}
+    void State(double t, float& cx, float& cy, float& cr, float& o) {
+        float p = Phase(t, 5, off), k = Apply(EASE_OUT, p);
+        cx = x + 50 * k; cy = y - 200 * k; cr = r * (.6f + 1.3f * k); o = op(p);
     }
-    bool State(double t, float& o, D2D1_MATRIX_3X2_F& m) {
-        if (t < 3) return false;
-        float p = Phase(t - 3, 11, 0);
-        o = op(p);
-        if (o < .01f) return false;
-        m = Matrix3x2F::Rotation(-24, Point2F(1500, 110)) * Matrix3x2F::Translation(tx(p), ty(p));
-        return true;
-    }
-    D2D1_RECT_F Bounds(double t) override {
-        float o; D2D1_MATRIX_3X2_F m;
-        if (!State(t, o, m)) return Empty();
-        return Inflate(TransformRect(RectF(1500, 110, 1650, 112), m), 2);
-    }
+    D2D1_RECT_F Bounds(double t) override { float a, b, c, o; State(t, a, b, c, o); return Circle(a, b, c + 1); }
     void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
-        float o; D2D1_MATRIX_3X2_F m;
-        if (!State(t, o, m)) return;
-        gCtx->SetTransform(m * art);
-        tail->SetOpacity(o);
-        gCtx->FillRectangle(RectF(1500, 110, 1650, 112), tail.Get());
-    }
-};
-struct MoonGlow : Element {
-    ComPtr<ID2D1RadialGradientBrush> b = Radial({ {0, Hex(0xCFD8F0, .28f)}, {1, Hex(0xCFD8F0, 0)} });
-    Track op{ {0, .5f, 1}, {.75f, 1, .75f}, EASE_IN_OUT };
-    Track sc{ {0, .5f, 1}, {1, 1.06f, 1}, EASE_IN_OUT };
-    MoonGlow() { slow = true; }
-    D2D1_RECT_F Bounds(double) override { return Circle(1530, 250, 172); }
-    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
-        float p = Phase(t, 7, 0);
+        float a, b, c, o; State(t, a, b, c, o);
         gCtx->SetTransform(art);
-        FillGlow(b.Get(), 1530, 250, 160 * sc(p), 160 * sc(p), op(p));
-    }
-};
-static double gLatitude = 0;
-struct Moon : Element {
-    ComPtr<ID2D1PathGeometry> lit;
-    bool flip = false;
-    int day = -1;
-    Moon() { still = true; }
-    void Update() {
-        SYSTEMTIME st; GetLocalTime(&st);
-        if (st.wDay == day && lit) return;
-        day = st.wDay;
-        FILETIME ft; GetSystemTimeAsFileTime(&ft);
-        double ms = ((double)(((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime) - 116444736000000000.0) / 10000.0;
-        double ph = std::fmod((ms - 947182440000.0) / 864e5 / 29.530588853, 1.0);
-        if (ph < 0) ph += 1;
-        float r = 48, tw = r * (float)std::cos(2 * PI * ph), aw = std::max(std::fabs(tw), .5f);
-        char d[256];
-        std::snprintf(d, sizeof d, "M1530,%g A%g,%g 0 0 1 1530,%g A%g,%g 0 0 %d 1530,%g Z", 250 - r, r, r, 250 + r, aw, r, tw >= 0 ? 0 : 1, 250 - r);
-        lit = Path(d);
-        flip = (ph > .5) != (gLatitude < 0);
-    }
-    D2D1_RECT_F Bounds(double) override { return Circle(1530, 250, 49); }
-    void Draw(double, const D2D1_MATRIX_3X2_F& art) override {
-        Update();
-        gCtx->SetTransform(art);
-        Solid(0x1C2235, 1);
-        gCtx->FillEllipse(Ellipse(Point2F(1530, 250), 48, 48), gBrush.Get());
-        gCtx->SetTransform((flip ? Matrix3x2F(-1, 0, 0, 1, 3060, 0) : Matrix3x2F::Identity()) * art);
-        Solid(0xEFE8D6, 1);
-        gCtx->FillGeometry(lit.Get(), gBrush.Get());
+        Solid(0xFFFFFF, o);
+        gCtx->FillEllipse(Ellipse(Point2F(a, b), c, c), gBrush.Get());
     }
 };
 
-// --- Red Book
-struct Candle : Element {
-    ComPtr<ID2D1RadialGradientBrush> b = Radial({ {0, Hex(0xFFECBE, .5f)}, {1, Hex(0xFFECBE, 0)} });
-    Track tx{ {0, .33f, .66f, 1}, {-60, 50, -20, -60}, EASE_IN_OUT };
-    Track ty{ {0, .33f, .66f, 1}, {-30, 20, 40, -30}, EASE_IN_OUT };
-    Track sc{ {0, .33f, .66f, 1}, {1, 1.05f, .97f, 1}, EASE_IN_OUT };
-    // The glow drifts so little that no pixel changes by even one shade: keep it still and save the work
-    Candle() { still = true; }
-    D2D1_RECT_F Bounds(double t) override {
-        float p = Phase(t, 20, 0);
-        return Circle(960 + tx(p), 470 + ty(p), 620 * sc(p) + 2);
-    }
-    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
-        float p = Phase(t, 20, 0);
-        gCtx->SetTransform(art);
-        FillGlow(b.Get(), 960 + tx(p), 470 + ty(p), 620 * sc(p), 620 * sc(p), 1);
-    }
-};
-static const D2D1_MATRIX_3X2_F kFire = Matrix3x2F(2.4f, 0, 0, 2.4f, 960, 960);  // translate(960,960) scale(2.4)
-struct FireGlow : Element {
-    ComPtr<ID2D1RadialGradientBrush> b = Radial({ {0, Hex(0xF2B65A, .55f)}, {1, Hex(0xF2B65A, 0)} });
-    Track op{ {0, .5f, 1}, {.55f, .85f, .55f}, EASE_IN_OUT };
-    D2D1_RECT_F Bounds(double) override { return TransformRect(RectF(-41, -31, 41, 19), kFire); }
-    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
-        gCtx->SetTransform(kFire * art);
-        FillGlow(b.Get(), 0, -6, 40, 24, op(Phase(t, 2.2f, 0)));
-    }
-};
-struct Wisp : Element {
-    ComPtr<ID2D1PathGeometry> g; float off; D2D1_RECT_F local;
-    Track op{ {0, .18f, 1}, {0, .75f, 0}, EASE_OUT };
-    static ComPtr<ID2D1StrokeStyle> round;
-    Wisp(const char* d, float o) : g(Path(d)), off(o) { g->GetBounds(nullptr, &local); }
-    D2D1_MATRIX_3X2_F M(float p) {
-        float k = Apply(EASE_OUT, p);
-        return Matrix3x2F::Scale(.6f + .7f * k, 1) * Matrix3x2F::Translation(18 * k, -170 * k) * kFire;
-    }
-    D2D1_RECT_F Bounds(double t) override {
-        float p = Phase(t, 4.2f, off);
-        if (op(p) < .01f) return Empty();
-        return Inflate(TransformRect(local, M(p)), 3);
-    }
-    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
-        float p = Phase(t, 4.2f, off);
-        gCtx->SetTransform(M(p) * art);
-        Solid(0x6A5236, op(p));
-        gCtx->DrawGeometry(g.Get(), gBrush.Get(), .9f, round.Get());
-    }
-};
-ComPtr<ID2D1StrokeStyle> Wisp::round;
+// --- Red Book: the campfire on the map
+static const D2D1_MATRIX_3X2_F kFire = Matrix3x2F::Translation(1210, 930);
 struct Flame : Element {
     ComPtr<ID2D1PathGeometry> g; float dur, off; uint32_t col; D2D1_POINT_2F origin; D2D1_RECT_F local;
-    Track sx{ {0, .2f, .45f, .7f, 1}, {1, .94f, 1.04f, .97f, 1}, EASE_IN_OUT };
-    Track sy{ {0, .2f, .45f, .7f, 1}, {1, 1.08f, .92f, 1.05f, 1}, EASE_IN_OUT };
-    Track sk{ {0, .2f, .45f, .7f, 1}, {0, -3, 2, -1, 0}, EASE_IN_OUT };
+    Track sx{ {0, .25f, .5f, .75f, 1}, {1, .94f, 1.04f, .97f, 1}, EASE_IN_OUT };
+    Track sy{ {0, .25f, .5f, .75f, 1}, {1, 1.08f, .93f, 1.05f, 1}, EASE_IN_OUT };
+    Track sk{ {0, .25f, .5f, .75f, 1}, {0, -3, 2, -1, 0}, EASE_IN_OUT };
     Flame(const char* d, float du, float o, uint32_t c) : g(Path(d)), dur(du), off(o), col(c) {
         g->GetBounds(nullptr, &local);
         origin = Point2F((local.left + local.right) / 2, local.bottom);
     }
-    D2D1_RECT_F Bounds(double) override { return TransformRect(Inflate(RectF(local.left - 3, local.top - 4, local.right + 3, local.bottom), 1), kFire); }
+    D2D1_RECT_F Bounds(double) override { return TransformRect(RectF(local.left - 8, local.top - 12, local.right + 8, local.bottom + 1), kFire); }
     void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
         float p = Phase(t, dur, off);
         auto m = Matrix3x2F::Translation(-origin.x, -origin.y) * Matrix3x2F::Skew(sk(p), 0) *
@@ -463,19 +377,29 @@ struct Flame : Element {
     }
 };
 struct Logs : Element {
-    ComPtr<ID2D1PathGeometry> sticks = Path("M-14,6 L14,-3 M-14,-3 L14,6");
+    ComPtr<ID2D1PathGeometry> sticks = Path("M-46,24 L46,-6 M-46,-6 L46,24");
     Logs() { still = true; }
-    D2D1_RECT_F Bounds(double) override { return TransformRect(RectF(-23, -5, 24, 16), kFire); }
+    D2D1_RECT_F Bounds(double) override { return TransformRect(RectF(-52, -12, 52, 30), kFire); }
     void Draw(double, const D2D1_MATRIX_3X2_F& art) override {
         gCtx->SetTransform(kFire * art);
-        Solid(0x4A3420, 1);
-        gCtx->DrawGeometry(sticks.Get(), gBrush.Get(), 2.2f, Wisp::round.Get());
-        Solid(0x6A5236, 1);
-        const float st[6][3] = { {-19, 5, 3}, {-12, 10, 3.2f}, {-3, 12, 3}, {6, 12, 3.2f}, {14, 9, 3}, {20, 4, 2.8f} };
-        for (auto& s : st) gCtx->DrawEllipse(Ellipse(Point2F(s[0], s[1]), s[2], s[2]), gBrush.Get(), .9f);
+        Solid(0x5A3F22, 1);
+        gCtx->DrawGeometry(sticks.Get(), gBrush.Get(), 9, Glint::gRound.Get());
     }
 };
-struct Mote : Element {  // Red Book dust
+struct Ember : Element {
+    float x, dur, off;
+    Track op{ {0, .15f, 1}, {0, 1, 0}, LINEAR };
+    Ember(float x_, float d, float o) : x(x_), dur(d), off(o) { smooth = true; }
+    D2D1_POINT_2F At(double t) { float p = Phase(t, dur, off); return Point2F(1210 + x + 30 * p, 830 - 260 * p); }
+    D2D1_RECT_F Bounds(double t) override { auto a = At(t); return Circle(a.x, a.y, 4); }
+    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
+        auto a = At(t);
+        gCtx->SetTransform(art);
+        Solid(0xFFC56A, op(Phase(t, dur, off)));
+        gCtx->FillEllipse(Ellipse(a, 2.4f, 2.4f), gBrush.Get());
+    }
+};
+struct Mote : Element {  // dust drifting over the map
     float x, y, dur, off;
     Track op{ {0, .15f, .85f, 1}, {0, .7f, .7f, 0}, LINEAR };
     D2D1_RECT_F Bounds(double t) override { float p = Phase(t, dur, off); return Circle(x + 60 * p, y - 300 * p, 3.5f); }
@@ -486,108 +410,161 @@ struct Mote : Element {  // Red Book dust
         gCtx->FillEllipse(Ellipse(Point2F(x + 60 * p, y - 300 * p), 2.4f, 2.4f), gBrush.Get());
     }
 };
-struct Needle : Element {
-    ComPtr<ID2D1PathGeometry> diamond = Path("M1700,930 L1760,922 L1820,930 L1760,938 Z");
-    ComPtr<ID2D1PathGeometry> body = Path("M1760,866 L1768,930 L1760,994 L1752,930 Z");
-    ComPtr<ID2D1PathGeometry> north = Path("M1760,866 L1768,930 L1752,930 Z");
+struct Needle : Element {  // the compass needle, swaying
+    ComPtr<ID2D1PathGeometry> ns = Path("M0,-96 L14,0 L0,96 L-14,0 Z");
+    ComPtr<ID2D1PathGeometry> ew = Path("M-96,0 L0,-14 L96,0 L0,14 Z");
     Track rot{ {0, .5f, 1}, {-6, 5, -6}, EASE_IN_OUT };
     Needle() { slow = true; }
-    D2D1_RECT_F Bounds(double) override { return Union(Circle(1760, 930, 66), RectF(1699, 921, 1821, 939)); }
+    D2D1_RECT_F Bounds(double) override { return Circle(1760, 900, 100); }
     void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
+        gCtx->SetTransform(Matrix3x2F::Rotation(rot(Phase(t, 7, 0))) * Matrix3x2F::Translation(1760, 900) * art);
+        Solid(0x5A3F22, .55f);
+        gCtx->FillGeometry(ew.Get(), gBrush.Get());
+        Solid(0x9A2A1C, .85f);
+        gCtx->FillGeometry(ns.Get(), gBrush.Get());
+    }
+};
+
+// --- Starlit Night
+struct Twinkle : Element {
+    float x, y, r, dur, off;
+    D2D1_RECT_F Bounds(double) override { return Circle(x, y, r * 1.3f + 1); }
+    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
+        float p = Phase(t, dur, off), k = .5f - .5f * std::cos(2 * PI * p);
         gCtx->SetTransform(art);
-        gCtx->PushLayer(LayerParameters1(Bounds(t), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, Matrix3x2F::Identity(), .6f), nullptr);
-        Solid(0x5A4026, .55f);
-        gCtx->FillGeometry(diamond.Get(), gBrush.Get());
-        gCtx->SetTransform(Matrix3x2F::Rotation(rot(Phase(t, 6, 0)), Point2F(1760, 930)) * art);
-        Solid(0x5A4026, 1);
-        gCtx->FillGeometry(body.Get(), gBrush.Get());
-        Solid(0x9A2A1C, 1);
-        gCtx->FillGeometry(north.Get(), gBrush.Get());
-        gCtx->PopLayer();
+        Solid(0xFFF8E6, .15f + .85f * k);
+        float s = .6f + .65f * k;
+        gCtx->FillEllipse(Ellipse(Point2F(x, y), r * s, r * s), gBrush.Get());
+    }
+};
+struct Shooting : Element {
+    ComPtr<ID2D1LinearGradientBrush> tail;
+    Track op{ {0, .86f, .88f, .96f, 1}, {0, 0, 1, 0, 0}, LINEAR };
+    Track tx{ {0, .86f, .96f, 1}, {0, 0, -560, 0}, LINEAR };
+    Track ty{ {0, .86f, .96f, 1}, {0, 0, 250, 0}, LINEAR };
+    Shooting() {
+        smooth = true;
+        D2D1_GRADIENT_STOP st[2] = { {0, Hex(0xFFF4D8, .95f)}, {1, Hex(0xFFF4D8, 0)} };
+        ComPtr<ID2D1GradientStopCollection> c;
+        gCtx->CreateGradientStopCollection(st, 2, &c);
+        gCtx->CreateLinearGradientBrush(LinearGradientBrushProperties(Point2F(1100, 110), Point2F(1250, 110)), c.Get(), &tail);
+    }
+    bool State(double t, float& o, D2D1_MATRIX_3X2_F& m) {
+        if (t < 3) return false;
+        float p = Phase(t - 3, 11, 0);
+        o = op(p);
+        if (o < .01f) return false;
+        m = Matrix3x2F::Rotation(-24, Point2F(1100, 110)) * Matrix3x2F::Translation(tx(p), ty(p));
+        return true;
+    }
+    D2D1_RECT_F Bounds(double t) override {
+        float o; D2D1_MATRIX_3X2_F m;
+        if (!State(t, o, m)) return Empty();
+        return Inflate(TransformRect(RectF(1100, 110, 1250, 112), m), 2);
+    }
+    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
+        float o; D2D1_MATRIX_3X2_F m;
+        if (!State(t, o, m)) return;
+        gCtx->SetTransform(m * art);
+        tail->SetOpacity(o);
+        gCtx->FillRectangle(RectF(1100, 110, 1250, 112), tail.Get());
+    }
+};
+struct Moon : Element {  // tonight's real phase, lit on the right side for your hemisphere
+    float cx, cy, r;
+    ComPtr<ID2D1PathGeometry> lit;
+    bool flip = false;
+    int day = -1;
+    Moon(float x, float y, float rr) : cx(x), cy(y), r(rr) { still = true; }
+    void Update() {
+        SYSTEMTIME st; GetLocalTime(&st);
+        if (st.wDay == day && lit) return;
+        day = st.wDay;
+        FILETIME ft; GetSystemTimeAsFileTime(&ft);
+        double ms = ((double)(((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime) - 116444736000000000.0) / 10000.0;
+        double ph = std::fmod((ms - 947182440000.0) / 864e5 / 29.530588853, 1.0);
+        if (ph < 0) ph += 1;
+        float tw = r * (float)std::cos(2 * PI * ph), aw = std::max(std::fabs(tw), .5f);
+        char d[256];
+        std::snprintf(d, sizeof d, "M%g,%g A%g,%g 0 0 1 %g,%g A%g,%g 0 0 %d %g,%g Z", cx, cy - r, r, r, cx, cy + r, aw, r, tw >= 0 ? 0 : 1, cx, cy - r);
+        lit = Path(d);
+        flip = (ph > .5) != (gLatitude < 0);
+    }
+    D2D1_RECT_F Bounds(double) override { return Circle(cx, cy, r + 1); }
+    void Draw(double, const D2D1_MATRIX_3X2_F& art) override {
+        Update();
+        gCtx->SetTransform(art);
+        Solid(0x2A3058, 1);
+        gCtx->FillEllipse(Ellipse(Point2F(cx, cy), r, r), gBrush.Get());
+        gCtx->SetTransform((flip ? Matrix3x2F(-1, 0, 0, 1, 2 * cx, 0) : Matrix3x2F::Identity()) * art);
+        Solid(0xFFF3D6, 1);
+        gCtx->FillGeometry(lit.Get(), gBrush.Get());
+    }
+};
+struct CabinWindow : Element {  // the cabin's lit windows, flickering now and then
+    float x, y;
+    CabinWindow(float x_, float y_) : x(x_), y(y_) { slow = true; rate = 10; }
+    D2D1_RECT_F Bounds(double) override { return RectF(x - 16, y - 5, x + 22, y + 13); }
+    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
+        float p = Phase(t, 3.2f, 0), o = (p > .31f && p < .33f) ? .82f : (p > .64f && p < .67f) ? .88f : 1;
+        gCtx->SetTransform(art);
+        Solid(0xFFC867, o);
+        gCtx->FillRectangle(RectF(x - 14, y - 3, x, y + 11), gBrush.Get());
+        gCtx->FillRectangle(RectF(x + 6, y - 3, x + 20, y + 11), gBrush.Get());
     }
 };
 
 // --- Elven Silver
-struct Shimmer : Element {
-    ComPtr<ID2D1PathGeometry> arch = Path("M690,1010 L690,560 C690,390 820,250 960,150 C1100,250 1230,390 1230,560 L1230,1010");
-    float len = 1;
-    std::vector<D2D1_POINT_2F> pts;  // 257 points along the arch, so the bounds need no geometry maths per frame
-    Shimmer() {
-        smooth = true;
-        arch->ComputeLength(nullptr, &len);
-        for (int i = 0; i <= 256; i++) { D2D1_POINT_2F p; arch->ComputePointAtLength(len * i / 256, nullptr, &p, nullptr); pts.push_back(p); }
-    }
-    // The dash pattern repeats every 1.36 of the arch; moving exactly one repeat per loop makes
-    // the end of each loop meet the start of the next (the original moved 1.3, so the glint
-    // jumped forward by its own length where the straight side meets the curve).
-    float Offset(double t) { return t < 1 ? 0.f : 1.15f - 1.36f * Phase(t - 1, 8, 0); }
-    D2D1_RECT_F Bounds(double t) override {
-        float off = Offset(t);
-        D2D1_RECT_F r = Empty();
-        for (int k = -1; k <= 2; k++) {
-            float a = std::max(0.f, -off + k * 1.36f), b = std::min(1.f, -off + k * 1.36f + .06f);
-            if (b <= a) continue;
-            for (int i = (int)std::floor(a * 256); i <= std::min(256, (int)std::ceil(b * 256)); i++)
-                r = Union(r, Circle(pts[i].x, pts[i].y, 4));
-        }
-        return r;
-    }
+struct Fall : Element {  // a gleam travelling down a waterfall
+    float x, y, w, h, dur, off;
+    Track op{ {0, .2f, 1}, {0, .9f, 0}, LINEAR };
+    Fall(float x_, float y_, float w_, float h_, float d, float o) : x(x_), y(y_), w(w_), h(h_), dur(d), off(o) { smooth = true; }
+    float Y(double t) { return y - 120 + (h + 120) * Phase(t, dur, off); }
+    D2D1_RECT_F Bounds(double t) override { float yy = Y(t); return RectF(x - w, yy - 2, x + w, yy + 42); }
     void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
-        // only the short travelling piece of the dash pattern is ever on the arch: draw just that
-        float off = Offset(t);
+        float yy = Y(t);
         gCtx->SetTransform(art);
-        Solid(0xF2FAFC, .9f);
-        for (int k = -1; k <= 2; k++) {
-            float a = std::max(0.f, -off + k * 1.36f), b = std::min(1.f, -off + k * 1.36f + .06f);
-            if (b <= a) continue;
-            ComPtr<ID2D1PathGeometry> g;
-            ComPtr<ID2D1GeometrySink> sk;
-            gFactory->CreatePathGeometry(&g);
-            g->Open(&sk);
-            auto at = [&](float u) {
-                float f = u * 256; int i = std::min(255, (int)f); float r = f - i;
-                return Point2F(pts[i].x + (pts[i + 1].x - pts[i].x) * r, pts[i].y + (pts[i + 1].y - pts[i].y) * r);
-            };
-            sk->BeginFigure(at(a), D2D1_FIGURE_BEGIN_HOLLOW);
-            for (int i = (int)std::floor(a * 256) + 1; i < b * 256; i++) sk->AddLine(pts[i]);
-            sk->AddLine(at(b));
-            sk->EndFigure(D2D1_FIGURE_END_OPEN);
-            sk->Close();
-            gCtx->DrawGeometry(g.Get(), gBrush.Get(), 3, Wisp::round.Get());
-        }
+        Solid(0xF2FAFC, .7f * op(Phase(t, dur, off)));
+        gCtx->FillRoundedRectangle(RoundedRect(RectF(x - w * .2f, yy, x + w * .6f, yy + 40), w * .4f, w * .4f), gBrush.Get());
     }
 };
-struct Halo : Element {
-    ComPtr<ID2D1RadialGradientBrush> b = Radial({ {0, Hex(0xBFD8E6, .45f)}, {1, Hex(0xBFD8E6, 0)} });
-    Track op{ {0, .5f, 1}, {.55f, 1, .55f}, EASE_IN_OUT };
-    Track sc{ {0, .5f, 1}, {1, 1.18f, 1}, EASE_IN_OUT };
-    Halo() { slow = true; }
-    D2D1_RECT_F Bounds(double) override { return Circle(960, 124, 64); }
+struct Mist : Element {  // a band of mist drifting along the valley
+    ComPtr<ID2D1LinearGradientBrush> b;
+    float y, h;
+    Mist(float y_, float h_) : y(y_), h(h_) {
+        slow = true; rate = 4;
+        D2D1_GRADIENT_STOP st[3] = { {0, Hex(0x9FC7D0, 0)}, {.5f, Hex(0x9FC7D0, .11f)}, {1, Hex(0x9FC7D0, 0)} };
+        ComPtr<ID2D1GradientStopCollection> c;
+        gCtx->CreateGradientStopCollection(st, 3, &c);
+        gCtx->CreateLinearGradientBrush(LinearGradientBrushProperties(Point2F(0, y), Point2F(0, y + h)), c.Get(), &b);
+    }
+    float X(double t) { float p = Phase(t, 80, 0); return -120 * std::cos(2 * PI * p); }
+    D2D1_RECT_F Bounds(double t) override { float dx = X(t); return RectF(ART_L - 200 + dx, y, ART_R + 200 + dx, y + h); }
     void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
-        float p = Phase(t, 5, 0);
         gCtx->SetTransform(art);
-        FillGlow(b.Get(), 960, 124, 52 * sc(p), 52 * sc(p), op(p));
+        gCtx->FillRectangle(Bounds(t), b.Get());
     }
 };
-struct Glyph : Element {
-    ComPtr<ID2D1PathGeometry> star = Path("M0,-12 L3,-3 L12,0 L3,3 L0,12 L-3,3 L-12,0 L-3,-3 Z");
-    ComPtr<ID2D1PathGeometry> cross = Path("M-7,-7 L7,7 M-7,7 L7,-7");
-    Glyph() { still = true; }
-    D2D1_RECT_F Bounds(double) override { return RectF(935, 99, 985, 149); }
-    void Draw(double, const D2D1_MATRIX_3X2_F& art) override {
-        gCtx->SetTransform(Matrix3x2F::Scale(2, 2) * Matrix3x2F::Translation(960, 124) * art);
-        Solid(0xE8F0F2, 1);
-        gCtx->FillGeometry(star.Get(), gBrush.Get());
-        Solid(0xE8F0F2, .6f);
-        gCtx->DrawGeometry(cross.Get(), gBrush.Get(), .6f);
+struct Lamp : Element {  // a lantern among the trees, glowing softly
+    float x, y, dur, off;
+    static ComPtr<ID2D1RadialGradientBrush> glow;
+    Lamp(float x_, float y_, float d, float o) : x(x_), y(y_), dur(d), off(o) { slow = true; rate = 10; }
+    D2D1_RECT_F Bounds(double) override { return Circle(x, y, 26); }
+    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
+        float k = .5f - .5f * std::cos(2 * PI * Phase(t, dur, off)), s = .85f + .3f * k;
+        gCtx->SetTransform(art);
+        FillGlow(glow.Get(), x, y, 22 * s, 22 * s, .6f + .4f * k);
+        Solid(0xF3E3B4, 1);
+        gCtx->FillEllipse(Ellipse(Point2F(x, y), 4.5f, 4.5f), gBrush.Get());
     }
 };
-struct ElvenMote : Element {
+ComPtr<ID2D1RadialGradientBrush> Lamp::glow;
+struct Rising : Element {  // a mote of light drifting up through the grove
     float x, y, dur, off;
     Track op{ {0, .2f, .8f, 1}, {0, .8f, .6f, 0}, LINEAR };
-    D2D1_RECT_F Bounds(double t) override { return Circle(x, y - 420 * Phase(t, dur, off), 7); }
+    D2D1_RECT_F Bounds(double t) override { return Circle(x, y - 360 * Phase(t, dur, off), 7); }
     void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
-        float p = Phase(t, dur, off), o = op(p), yy = y - 420 * p;
+        float p = Phase(t, dur, off), o = op(p), yy = y - 360 * p;
         gCtx->SetTransform(art);
         Solid(0xC8E1EB, .22f * o);
         gCtx->FillEllipse(Ellipse(Point2F(x, yy), 6, 6), gBrush.Get());
@@ -596,94 +573,29 @@ struct ElvenMote : Element {
     }
 };
 
-// --- Shire Morning
-struct Rays : Element {
-    ComPtr<ID2D1PathGeometry> g;
-    Rays() {
-        slow = true; rate = 3;
-        std::string d;
-        char b[96];
-        for (int i = 0; i < 12; i++) {
-            float a = i * PI / 6;
-            std::snprintf(b, sizeof b, "M%g,%g L%g,%g ", frand10(1560 + 150 * std::cos(a)), frand10(250 + 150 * std::sin(a)),
-                          frand10(1560 + 200 * std::cos(a)), frand10(250 + 200 * std::sin(a)));
-            d += b;
-        }
-        g = Path(d.c_str());
-    }
-    D2D1_RECT_F Bounds(double) override { return Circle(1560, 250, 212); }
+// --- Weather, over the outdoor scenes
+struct Drop : Element {  // rain: a slanting streak
+    float x, dur, off, len;
+    Drop(float x_, float d, float o, float l) : x(x_), dur(d), off(o), len(l) { smooth = true; }
+    D2D1_POINT_2F At(double t) { float p = Phase(t, dur, off); return Point2F(x - 120 * p, -60 + 1200 * p); }
+    D2D1_RECT_F Bounds(double t) override { auto a = At(t); return RectF(a.x - 3 - len * .1f, a.y - 2, a.x + 3, a.y + len + 2); }
     void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
-        gCtx->SetTransform(Matrix3x2F::Rotation(360 * Phase(t, 140, 0), Point2F(1560, 250)) * art);
-        Solid(0xF2C969, .2f);
-        gCtx->DrawGeometry(g.Get(), gBrush.Get(), 18, Wisp::round.Get());
-    }
-};
-struct Sun : Element {
-    ComPtr<ID2D1RadialGradientBrush> b = Radial({ {0, Hex(0xFFF6D6, 1)}, {.45f, Hex(0xFFE9A8, .55f)}, {1, Hex(0xFFE9A8, 0)} });
-    Sun() { still = true; }
-    D2D1_RECT_F Bounds(double) override { return Circle(1560, 250, 241); }
-    void Draw(double, const D2D1_MATRIX_3X2_F& art) override {
+        auto a = At(t);
         gCtx->SetTransform(art);
-        FillGlow(b.Get(), 1560, 250, 240, 240, 1);
-        Solid(0xFFF3C9, 1);
-        gCtx->FillEllipse(Ellipse(Point2F(1560, 250), 78, 78), gBrush.Get());
+        Solid(0xDCE6EE, .45f);
+        gCtx->DrawLine(a, Point2F(a.x - len * .1f, a.y + len), gBrush.Get(), 1.6f, Glint::gRound.Get());
     }
 };
-struct Cloud : Element {
-    static ComPtr<ID2D1Geometry> shape;
-    float y, sc, dur, off, op;
-    Cloud(float y_, float s, float d, float o, float a) : y(y_), sc(s), dur(d), off(o), op(a) {}
-    D2D1_MATRIX_3X2_F M(double t) { return Matrix3x2F::Scale(sc, sc) * Matrix3x2F::Translation(-400 + 2800 * Phase(t, dur, off), y); }
-    D2D1_RECT_F Bounds(double t) override { return Inflate(TransformRect(RectF(14, 2, 104, 37), M(t)), 2); }
+struct Flake : Element {  // snow: a flake drifting down
+    float x, dur, off, r;
+    Flake(float x_, float d, float o, float rr) : x(x_), dur(d), off(o), r(rr) {}
+    D2D1_POINT_2F At(double t) { float p = Phase(t, dur, off); return Point2F(x + 30 * std::sin(p * 2 * PI * 2 + x), -20 + 1120 * p); }
+    D2D1_RECT_F Bounds(double t) override { auto a = At(t); return Circle(a.x, a.y, r + 1); }
     void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
-        gCtx->SetTransform(M(t) * art);
-        Solid(0xFFFFFF, op);
-        gCtx->FillGeometry(shape.Get(), gBrush.Get());
-    }
-};
-ComPtr<ID2D1Geometry> Cloud::shape;
-struct Tree : Element {
-    ComPtr<ID2D1PathGeometry> branch = Path("M426,640 L430,720 M430,694 L410,676 M430,684 L450,664");
-    Track rot{ {0, .5f, 1}, {-1, 1, -1}, EASE_IN_OUT };
-    Tree() { slow = true; }
-    D2D1_RECT_F Bounds(double) override { return RectF(354, 556, 510, 728); }
-    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
-        gCtx->SetTransform(Matrix3x2F::Rotation(rot(Phase(t, 7, 0)), Point2F(432, 720)) * art);
-        Solid(0x5B4A33, 1);
-        gCtx->DrawGeometry(branch.Get(), gBrush.Get(), 6, Wisp::round.Get());
-        Solid(0x6F954F, 1);
-        gCtx->FillEllipse(Ellipse(Point2F(430, 614), 52, 52), gBrush.Get());
-        gCtx->FillEllipse(Ellipse(Point2F(394, 638), 32, 32), gBrush.Get());
-        gCtx->FillEllipse(Ellipse(Point2F(466, 634), 36, 36), gBrush.Get());
-        Solid(0x7EA35C, 1);
-        gCtx->FillEllipse(Ellipse(Point2F(438, 594), 32, 32), gBrush.Get());
-    }
-};
-struct Chimney : Element {
-    Chimney() { still = true; }
-    D2D1_RECT_F Bounds(double) override { return RectF(1235, 747, 1271, 833); }
-    void Draw(double, const D2D1_MATRIX_3X2_F& art) override {
+        auto a = At(t);
         gCtx->SetTransform(art);
-        Solid(0x7A6247, 1);
-        gCtx->FillRoundedRectangle(RoundedRect(RectF(1240, 752, 1266, 832), 3, 3), gBrush.Get());
-        Solid(0x6A533B, 1);
-        gCtx->FillRoundedRectangle(RoundedRect(RectF(1236, 748, 1270, 757), 2, 2), gBrush.Get());
-    }
-};
-struct Smoke : Element {
-    float off;
-    Track op{ {0, .15f, 1}, {0, .55f, 0}, EASE_OUT };
-    explicit Smoke(float o) : off(o) {}
-    void State(double t, float& x, float& y, float& r, float& o) {
-        float p = Phase(t, 4.5f, off), k = Apply(EASE_OUT, p);
-        x = 1253 + 60 * k; y = 738 - 200 * k; r = 12 * (.6f + 1.2f * k); o = op(p);
-    }
-    D2D1_RECT_F Bounds(double t) override { float x, y, r, o; State(t, x, y, r, o); return Circle(x, y, r + 1); }
-    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
-        float x, y, r, o; State(t, x, y, r, o);
-        gCtx->SetTransform(art);
-        Solid(0xFFFFFF, o);
-        gCtx->FillEllipse(Ellipse(Point2F(x, y), r, r), gBrush.Get());
+        Solid(0xFFFFFF, .85f);
+        gCtx->FillEllipse(Ellipse(a, r, r), gBrush.Get());
     }
 };
 
@@ -692,113 +604,141 @@ enum SceneId { NONE = -1, SHIRE, REDBOOK, STARLIT, ELVEN };
 static const wchar_t* kSceneKey[] = { L"shire", L"redbook", L"starlit", L"elven" };
 static const wchar_t* kWallName[] = { L"Lembas - Shire Morning.jpg", L"Lembas - Red Book.jpg", L"Lembas - Starlit Night.jpg", L"Lembas - Elven Silver.jpg" };
 static const wchar_t* kLayerName[] = { L"back", L"mid", L"front" };
+static const wchar_t* kSeasonName[] = { L"spring", L"summer", L"autumn", L"winter" };
+
+// The season, by the month and your hemisphere (the same rule as the phone and the watch).
+static int SeasonNow() {
+    SYSTEMTIME st; GetLocalTime(&st);
+    static const int north[] = { 3, 3, 0, 0, 0, 1, 1, 1, 2, 2, 2, 3 };  // Jan..Dec
+    int s = north[st.wMonth - 1];
+    return gLatitude < 0 ? (s + 2) % 4 : s;
+}
 
 struct Scene {
     SceneId id = NONE;
+    int season = 1, weather = 0;
     std::vector<Element*> els;
     std::vector<int> layers;  // which of back/mid/front exist
     ~Scene() { for (auto* e : els) delete e; }
 };
 static Scene* gScene;
 
+static void AddWeather(std::vector<Element*>& E, SceneId id) {
+    if (id == REDBOOK) return;  // a map indoors: no weather
+    Rng r(77);
+    if (gWx == 1 || gWx == 5) {  // cloud
+        uint32_t c = id == SHIRE ? 0xF2F4F4 : 0x3A4266;
+        float o = id == SHIRE ? .85f : .55f;
+        E.push_back(new Cloud(200, 90, 1.6f, o, 300, c));
+        E.push_back(new Cloud(1100, 160, 1.3f, o, 360, c));
+        E.push_back(new Cloud(1900, 70, 1.8f, o, 420, c));
+    }
+    if (gWx == 2) {  // fog
+        E.push_back(new Mist(560, 260));
+        E.push_back(new Mist(760, 320));
+    }
+    if (gWx == 3 || gWx == 5) for (int i = 0; i < 90; i++)
+        E.push_back(new Drop(frand10(ART_L + r() * (ART_R - ART_L + 200)), frand10(.8 + r() * .5), frand10(r() * 2), frand10(30 + r() * 30)));
+    if (gWx == 4) for (int i = 0; i < 80; i++)
+        E.push_back(new Flake(frand10(ART_L + r() * (ART_R - ART_L)), frand10(10 + r() * 9), frand10(r() * 20), frand10(1.6 + r() * 2.2)));
+}
+
 static Scene* BuildScene(SceneId id) {
     Scene* s = new Scene();
     s->id = id;
+    s->season = SeasonNow();
+    s->weather = gWx;
     auto& E = s->els;
-    if (id == STARLIT) {
-        Rng r(1954);
-        for (int i = 0; i < 300 * 5; i++) r();  // the still stars are in the back layer
-        auto col = [&]() { double k = r(); return k < .12 ? 0xFFE2B0u : k < .25 ? 0xBFD4FFu : 0xF4F1E8u; };
+    if (id == SHIRE) {
         E.push_back(new LayerEl(0));
-        for (int i = 0; i < 70; i++) {
-            auto* t = new Twinkle();
-            t->x = frand10(r() * 1920); t->y = frand10(std::pow(r(), 1.3) * 720); t->r = frand10(1 + std::pow(r(), 3) * 2);
-            t->col = col(); t->dur = frand10(1.8 + r() * 3.4); t->off = frand10(r() * 6);
-            E.push_back(t);
+        E.push_back(new Glow(1390, 250, 300, { {0, Hex(0xFFF6D8, 1)}, {.28f, Hex(0xFFEFC0, 1)}, {.29f, Hex(0xFFE7A6, .55f)}, {1, Hex(0xFFE7A6, 0)} }, 6));
+        if (gWx != 5) {
+            E.push_back(new Cloud(1640, 190, 1, .9f, 260)); E.push_back(new Cloud(980, 140, .7f, .75f, 320));
+            E.push_back(new Cloud(1240, 420, .55f, .8f, 380)); E.push_back(new Cloud(320, 470, .6f, .7f, 300));
+            E.push_back(new Cloud(-260, 260, .8f, .8f, 340));
         }
-        for (int i = 0; i < 10; i++) {
-            auto* k = new Spark();
-            k->x = frand10(60 + r() * 1800); k->y = frand10(40 + r() * 600); k->dur = frand10(2.2 + r() * 2.5); k->off = frand10(r() * 4);
-            E.push_back(k);
-        }
-        E.push_back(new Shooting());
-        E.push_back(new MoonGlow());
-        E.push_back(new Moon());
+        E.push_back(new LayerEl(1));
+        const float g[6][3] = { {140, 775, 70}, {520, 792, 40}, {1010, 771, 90}, {1560, 752, 50}, {-300, 768, 60}, {2100, 770, 70} };
+        for (int i = 0; i < 6; i++) E.push_back(new Glint(g[i][0], g[i][1], g[i][2], 4.f + i % 3, i * 1.3f, 3, 0xFFFFFF));
         E.push_back(new LayerEl(2));
-        s->layers = { 0, 2 };
+        for (int k = 0; k < 4; k++) E.push_back(new Smoke(1392, 806, 12, k * 1.25f));
+        s->layers = { 0, 1, 2 };
     } else if (id == REDBOOK) {
         Rng r(1937);
-        for (int i = 0; i < 1100 * 5; i++) r();
         E.push_back(new LayerEl(0));
-        E.push_back(new Candle());
-        E.push_back(new LayerEl(2));
-        E.push_back(new FireGlow());
-        E.push_back(new Wisp("M0,-18 C-5,-26 5,-34 0,-42 S-5,-58 0,-66", 0));
-        E.push_back(new Wisp("M-3,-18 C-8,-26 2,-34 -3,-42 S-8,-58 -3,-66", 1.4f));
-        E.push_back(new Wisp("M3,-18 C-2,-26 8,-34 3,-42 S-2,-58 3,-66", 2.8f));
-        E.push_back(new Flame("M0,0 C-10,-4 -10,-14 -5,-21 C-4,-16 -1,-15 -1,-18 C-2,-24 1,-30 6,-34 C4,-26 10,-22 9,-13 C9,-5 6,-1 0,0 Z", 1.4f, 0, 0x9A2A1C));
-        E.push_back(new Flame("M0,0 C-4,-2 -5,-7 -3,-11 C-2,-8 0,-8 0,-10 C0,-13 2,-16 4,-18 C4,-13 6,-9 5,-5 C4,-2 2,0 0,0 Z", 1.1f, .5f, 0xD9973A));
-        E.push_back(new Logs());
         for (int i = 0; i < 18; i++) {
             auto* m = new Mote();
-            m->x = frand10(200 + r() * 1520); m->y = frand10(500 + r() * 520); m->dur = frand10(10 + r() * 9); m->off = frand10(r() * 16);
+            m->x = frand10(ART_L + 100 + r() * (ART_R - ART_L - 200)); m->y = frand10(500 + r() * 520); m->dur = frand10(10 + r() * 9); m->off = frand10(r() * 16);
             E.push_back(m);
         }
+        E.push_back(new Glow(1210, 900, 230, { {0, Hex(0xFFB25B, .55f)}, {1, Hex(0xFFB25B, 0)} }, 2.2f, 0, 1, 1.04f, .7f, 1));
+        E.push_back(new Logs());
+        E.push_back(new Flame("M0,-118 C34,-72 46,-46 30,-6 C22,14 -22,14 -30,-6 C-44,-40 -18,-62 0,-118 Z", 1.3f, 0, 0xC8401F));
+        E.push_back(new Flame("M2,-74 C22,-46 26,-30 16,-8 C10,4 -12,4 -16,-8 C-24,-30 -8,-44 2,-74 Z", 1.05f, .4f, 0xF29A3A));
+        E.push_back(new Flame("M2,-40 C12,-26 12,-16 7,-6 C4,0 -6,0 -8,-6 C-11,-16 -4,-24 2,-40 Z", .8f, .2f, 0xFFE07A));
+        for (int i = 0; i < 6; i++) E.push_back(new Ember(-20.f + i * 8, 2.4f + i * .4f, i * .7f));
         E.push_back(new Needle());
+        s->layers = { 0 };
+    } else if (id == STARLIT) {
+        Rng r(1954);
+        E.push_back(new LayerEl(0));
+        for (int i = 0; i < 46; i++) {
+            auto* t = new Twinkle();
+            t->x = frand10(ART_L + r() * (ART_R - ART_L)); t->y = frand10(r() * 430); t->r = frand10(1.4 + r() * 1.2);
+            t->dur = frand10(2 + r() * 3.5); t->off = frand10(r() * 5);
+            E.push_back(t);
+        }
+        E.push_back(new Shooting());
+        E.push_back(new Glow(1480, 230, 173, { {0, Hex(0xFFF7E0, .55f)}, {1, Hex(0xFFF7E0, 0)} }, 7));
+        E.push_back(new Moon(1480, 230, 54));
+        const float g[6][3] = { {-80, 0, 160}, {-60, 28, 120}, {-44, 58, 88}, {-30, 94, 60}, {-20, 136, 40}, {-12, 186, 24} };
+        for (int i = 0; i < 6; i++) E.push_back(new Glint(1480 + g[i][0], 812 + g[i][1], g[i][2], 3 + i * .5f, i * .6f, 4, 0xFFF3D6));
+        E.push_back(new LayerEl(2));
+        E.push_back(new CabinWindow(600, 905));
         s->layers = { 0, 2 };
     } else if (id == ELVEN) {
         Rng r(1955);
-        for (int i = 0; i < 90 * 4; i++) r();
         E.push_back(new LayerEl(0));
-        E.push_back(new Shimmer());
-        E.push_back(new Halo());
-        E.push_back(new Glyph());
-        for (int i = 0; i < 22; i++) {
-            auto* m = new ElvenMote();
-            m->x = frand10(720 + r() * 480); m->y = frand10(620 + r() * 380); m->dur = frand10(9 + r() * 9); m->off = frand10(r() * 16);
+        E.push_back(new Glow(1160, 150, 90, { {0, Hex(0xBFE3EC, .5f)}, {1, Hex(0xBFE3EC, 0)} }, 6));
+        const float falls[4][4] = { {1600, 480, 8, 420}, {1652, 430, 5, 470}, {1708, 390, 12, 520}, {-120, 520, 7, 380} };
+        for (int i = 0; i < 4; i++) for (int k = 0; k < 3; k++)
+            E.push_back(new Fall(falls[i][0], falls[i][1], falls[i][2], falls[i][3], 2.2f + i * .3f, k * .8f + i * .3f));
+        E.push_back(new Mist(640, 140));
+        E.push_back(new LayerEl(1));
+        const float lamps[7][2] = { {880, 760}, {1030, 700}, {1180, 740}, {960, 820}, {1110, 800}, {1250, 830}, {760, 820} };
+        for (int i = 0; i < 7; i++) E.push_back(new Lamp(lamps[i][0], lamps[i][1], 3.f + i % 3, i * .9f));
+        for (int i = 0; i < 18; i++) {
+            auto* m = new Rising();
+            m->x = frand10(640 + r() * 760); m->y = frand10(900 + r() * 120); m->dur = frand10(9 + r() * 8); m->off = frand10(r() * 16);
             E.push_back(m);
         }
-        s->layers = { 0 };
-    } else if (id == SHIRE) {
-        E.push_back(new LayerEl(0));
-        E.push_back(new Rays());
-        E.push_back(new Sun());
-        E.push_back(new Cloud(500, 2.4f, 90, 20, .85f));
-        E.push_back(new Cloud(560, 1.6f, 120, 70, .75f));
-        E.push_back(new Cloud(70, 1.5f, 150, 110, .65f));
-        E.push_back(new Cloud(530, 1.2f, 170, 30, .6f));
-        E.push_back(new LayerEl(1));
-        E.push_back(new Tree());
-        E.push_back(new Chimney());
-        for (int i = 0; i < 3; i++) E.push_back(new Smoke(i * 1.5f));
-        E.push_back(new LayerEl(2));
-        s->layers = { 0, 1, 2 };
+        s->layers = { 0, 1 };
     }
+    AddWeather(E, id);
     return s;
 }
 
 static void InitShared() {
-    gFactory->CreateStrokeStyle(StrokeStyleProperties(D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_LINE_JOIN_ROUND), nullptr, 0, &Wisp::round);
-    Spark::shape = Path("M0,-9 L1.4,-1.4 L9,0 L1.4,1.4 L0,9 L-1.4,1.4 L-9,0 L-1.4,-1.4 Z");
-    Spark::glow = Radial({ {0, Hex(0xFFF4D8, .9f)}, {1, Hex(0xFFF4D8, 0)} });
+    gFactory->CreateStrokeStyle(StrokeStyleProperties(D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_LINE_JOIN_ROUND), nullptr, 0, &Glint::gRound);
+    Lamp::glow = Radial({ {0, Hex(0xF3E3B4, .45f)}, {1, Hex(0xF3E3B4, 0)} });
     // cloud = one shape (so overlapping puffs don't double up their transparency)
     ComPtr<ID2D1RoundedRectangleGeometry> rr;
     ComPtr<ID2D1EllipseGeometry> c1, c2, c3;
-    gFactory->CreateRoundedRectangleGeometry(RoundedRect(RectF(14, 22, 104, 34), 6, 6), &rr);
-    gFactory->CreateEllipseGeometry(Ellipse(Point2F(30, 22), 12, 12), &c1);
-    gFactory->CreateEllipseGeometry(Ellipse(Point2F(60, 20), 17, 17), &c2);
-    gFactory->CreateEllipseGeometry(Ellipse(Point2F(90, 23), 12, 12), &c3);
+    gFactory->CreateRoundedRectangleGeometry(RoundedRect(RectF(-90, -8, 110, 26), 17, 17), &rr);
+    gFactory->CreateEllipseGeometry(Ellipse(Point2F(-30, -6), 32, 32), &c1);
+    gFactory->CreateEllipseGeometry(Ellipse(Point2F(20, -22), 42, 42), &c2);
+    gFactory->CreateEllipseGeometry(Ellipse(Point2F(66, -2), 26, 26), &c3);
     ID2D1Geometry* parts[4] = { rr.Get(), c1.Get(), c2.Get(), c3.Get() };
     ComPtr<ID2D1GeometryGroup> grp;
     gFactory->CreateGeometryGroup(D2D1_FILL_MODE_WINDING, parts, 4, &grp);
     Cloud::shape = grp;
 }
 static void ReleaseShared() {
-    Wisp::round.Reset(); Spark::shape.Reset(); Spark::glow.Reset(); Cloud::shape.Reset();
+    Glint::gRound.Reset(); Lamp::glow.Reset(); Cloud::shape.Reset();
 }
 
 // ------------------------------------------------------------------------------------ settings
-struct Settings { bool clock = true, meals = true, enabled = true, adaptive = true, modern = true; double lat = -33.87, lon = 151.21; std::wstring look = L"adaptive"; } gSet;
+struct Settings { bool clock = true, meals = true, enabled = true, adaptive = true, modern = true, weather = true; double lat = -33.87, lon = 151.21; std::wstring look = L"adaptive"; } gSet;
 
 static std::wstring ReadAll(const std::wstring& path) {
     HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
@@ -842,6 +782,7 @@ static void LoadSettings() {
     gSet.clock = !(JsonValue(j, L"desktopClock", v) && v == L"false");
     gSet.meals = !(JsonValue(j, L"meals", v) && v == L"false");
     gSet.enabled = !(JsonValue(j, L"livingDesktop", v) && v == L"false");
+    gSet.weather = !(JsonValue(j, L"weather", v) && v == L"false");
     gLatitude = gSet.lat;
 }
 static SceneId gForced = NONE;  // --look <name>: for testing one look
@@ -898,6 +839,24 @@ static SceneId SunScene(const SYSTEMTIME& now) {
     if (m >= 23 * 60 || m < 4 * 60) return ELVEN;
     return STARLIT;
 }
+// The weather Lembas Sun saved (weather.json: {"wx": 0..5, "at": unix seconds}); clear if it's off,
+// missing or more than four hours old.
+static int ReadWeather() {
+    if (!gSet.weather) return 0;
+    wchar_t base[MAX_PATH];
+    GetEnvironmentVariableW(L"LOCALAPPDATA", base, MAX_PATH);
+    std::wstring j = ReadAll(std::wstring(base) + L"\\Lembas\\weather.json"), v;
+    if (!JsonValue(j, L"wx", v)) return 0;
+    int wx = _wtoi(v.c_str());
+    std::wstring at;
+    if (JsonValue(j, L"at", at)) {
+        FILETIME ft; GetSystemTimeAsFileTime(&ft);
+        double now = ((double)(((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime) - 116444736000000000.0) / 1e7;
+        if (now - _wtof(at.c_str()) > 4 * 3600) return 0;
+    }
+    return std::min(5, std::max(0, wx));
+}
+
 static void CheckSun() {
     static int lastMinute = -1, sinceReload = 0;
     static ULONGLONG lastKick = 0;
@@ -906,6 +865,8 @@ static void CheckSun() {
     if (minute == lastMinute) return;
     lastMinute = minute;
     if (++sinceReload >= 10) { sinceReload = 0; LoadSettings(); }  // the time zone (and so the city) may have changed
+    gWx = ReadWeather();
+    if (gScene && (gScene->season != SeasonNow() || gScene->weather != gWx)) gRescene = true;
     if (!gSet.adaptive || gForced != NONE) return;
     SceneId want = SunScene(st), shown = SceneFromWallpaper();
     if (shown == NONE || want == shown) return;
@@ -921,8 +882,9 @@ struct Mon {
     RECT work;        // work area in screen coordinates (for the "is it covered" check)
     RECT screen;
     bool primary;
-    D2D1_MATRIX_3X2_F art;  // artboard -> canvas
-    UINT bw, bh;            // size of the scene on this monitor (it is cropped like "fill")
+    D2D1_MATRIX_3X2_F art;  // design units (the 1920x1080 design; the artboard runs -480..2400) -> canvas
+    D2D1_POINT_2F org;      // where the artboard's top left lands, in canvas pixels
+    UINT bw, bh;            // size of the whole artboard on this monitor (it is cropped like "fill")
     ComPtr<ID2D1Bitmap1> layer[3];
 };
 static std::vector<Mon> gMons;
@@ -930,11 +892,14 @@ static std::vector<Mon> gMons;
 static void SetupMon(Mon& m, RECT rc) {
     m.rc = rc;
     float W = (float)(rc.right - rc.left), H = (float)(rc.bottom - rc.top);
-    float s = std::max(W / 1920.f, H / 1080.f);
-    m.bw = (UINT)std::ceil(1920 * s);
+    // The artboard is 2880 wide: a 16:9 screen shows its middle 1920 (the design), an ultrawide
+    // more of the panorama, and a taller screen is filled by height. Centred, anchored to the bottom.
+    float s = std::max(W / 2880.f, H / 1080.f);
+    m.bw = (UINT)std::ceil(2880 * s);
     m.bh = (UINT)std::ceil(1080 * s);
-    float ox = std::round((W - m.bw) / 2), oy = H - m.bh;  // centred, anchored to the bottom (xMidYMax slice)
-    m.art = Matrix3x2F(m.bw / 1920.f, 0, 0, m.bh / 1080.f, rc.left + ox, rc.top + oy);
+    float ox = std::round((W - m.bw) / 2), oy = H - m.bh;
+    m.org = Point2F(rc.left + ox, rc.top + oy);
+    m.art = Matrix3x2F(m.bw / 2880.f, 0, 0, m.bh / 1080.f, rc.left + ox + 480 * (m.bw / 2880.f), rc.top + oy);
 }
 static BOOL CALLBACK MonEnum(HMONITOR hm, HDC, LPRECT, LPARAM) {
     MONITORINFO mi = { sizeof mi };
@@ -972,7 +937,10 @@ static void LoadLayers() {
         if (!gScene) continue;
         for (int i : gScene->layers) {
             std::wstring ext = i == 0 ? L".jpg" : L".png";
-            m.layer[i] = LoadLayer(gDir + L"\\" + kSceneKey[gScene->id] + L"-" + kLayerName[i] + ext, m.bw, m.bh);
+            std::wstring name = std::wstring(kSceneKey[gScene->id]) + L"-" + kLayerName[i] + ext;
+            // this season's layers, else the plain ones
+            m.layer[i] = LoadLayer(gDir + L"\\" + kSeasonName[gScene->season] + L"\\" + name, m.bw, m.bh);
+            if (!m.layer[i]) m.layer[i] = LoadLayer(gDir + L"\\" + name, m.bw, m.bh);
         }
     }
 }
@@ -1089,6 +1057,10 @@ struct Line {
     float spacing = 0;  // letter-spacing in em
     float margin = 0;   // margin-top in vh
     bool time = false, pill = false;
+    // a second style from `split` on (the light minutes after the heavy hours)
+    int split = -1;
+    uint32_t color2 = 0;
+    DWRITE_FONT_WEIGHT weight2 = DWRITE_FONT_WEIGHT_LIGHT;
 };
 
 struct ClockImage {
@@ -1106,6 +1078,7 @@ static ComPtr<IDWriteTextLayout> MakeLayout(const Line& l, float vh) {
     gDWrite->CreateTextLayout(l.text.c_str(), (UINT32)l.text.size(), f.Get(), 10000, 1000, &lay);
     ComPtr<IDWriteTextLayout1> l1;
     if (l.spacing != 0 && SUCCEEDED(lay.As(&l1))) l1->SetCharacterSpacing(0, l.spacing * l.size * vh, 0, DWRITE_TEXT_RANGE{ 0, (UINT32)l.text.size() });
+    if (l.split >= 0 && l.split < (int)l.text.size()) lay->SetFontWeight(l.weight2, DWRITE_TEXT_RANGE{ (UINT32)l.split, (UINT32)(l.text.size() - l.split) });
     return lay;
 }
 
@@ -1146,37 +1119,38 @@ static void BuildClock(SceneId sc) {
     mea.size = 2.4f; mea.style = DWRITE_FONT_STYLE_ITALIC; mea.margin = 2.6f;
     tim.text = time; dat.text = greg; mea.text = meal;
     bool left = false, shadow = false;
+    float leftX = 9;  // the left edge for a left-aligned clock, in vw
     float top = 15;
     uint32_t firstColor = 0;
     std::wstring ampm;
 
     if (gSet.modern) {
-        // The watch face's type: the date and the Shire date, then the hours (heavy, in the look's
-        // colour) over the minutes (light), then the mealtime.
-        static const uint32_t hoursC[] = { 0x3E6B2E, 0x9A2A1C, 0xE9CC88, 0xC6DDE8 };
-        static const uint32_t textC[] = { 0x2F4A2A, 0x2B1E12, 0xF3EBD6, 0xE6ECEE };
-        static const uint32_t loreC[] = { 0x6A7D4E, 0x9A2A1C, 0xD9BC7A, 0xC4D2D6 };
+        // The corner clock, as on the phone and the watch: the day and the Quenya hour, then the time
+        // (heavy hours, light minutes), the mealtime, and the Shire and everyday dates. Top left, out
+        // of the picture's way.
+        static const uint32_t inkC[] = { 0x27452A, 0x2B1E12, 0xF4ECD8, 0xE6ECEE };
+        static const uint32_t accC[] = { 0x3E6A3A, 0x9A2A1C, 0xE2C687, 0xB9C6CA };
+        static const uint32_t softC[] = { 0x55703F, 0x6A5236, 0x9C927B, 0x7D898D };
         int k = sc == SHIRE ? 0 : sc == REDBOOK ? 1 : sc == STARLIT ? 2 : 3;
+        int hh = h24 ? h : ((h % 12) ? h % 12 : 12);
         wchar_t hb[8], mb[8];
-        std::swprintf(hb, 8, L"%02d", h24 ? h : ((h % 12) ? h % 12 : 12));
-        std::swprintf(mb, 8, L"%02d", st.wMinute);
-        L.assign(6, Line());
-        Line &d = L[0], &s2 = L[1], &hh = L[2], &mm = L[3], &me = L[4];
-        L.pop_back();
-        d.family = alegreya; d.weight = DWRITE_FONT_WEIGHT_MEDIUM; d.size = 2.2f; d.spacing = .02f; d.color = textC[k];
-        d.text = DateFmt(st, L"ddd d MMM");
-        s2.family = fraunces; s2.style = DWRITE_FONT_STYLE_ITALIC; s2.size = 2.4f; s2.color = loreC[k];
-        s2.text = wd + L" · " + shireTxt;
-        hh.family = fraunces; hh.weight = DWRITE_FONT_WEIGHT_EXTRA_BOLD; hh.size = 19; hh.time = true; hh.color = hoursC[k]; hh.margin = 1.2f;
-        hh.text = hb;
-        mm.family = fraunces; mm.weight = DWRITE_FONT_WEIGHT_LIGHT; mm.size = 19; mm.time = true; mm.color = textC[k]; mm.margin = -2.2f;
-        mm.text = mb;
-        me.family = fraunces; me.style = DWRITE_FONT_STYLE_ITALIC; me.size = 2.2f; me.color = loreC[k]; me.margin = 1.4f;
+        std::swprintf(hb, 8, h24 ? L"%02d" : L"%d", hh);
+        std::swprintf(mb, 8, L":%02d", st.wMinute);
+        L.assign(4, Line());
+        Line &d = L[0], &tm = L[1], &me = L[2], &dt = L[3];
+        d.family = alegreya; d.weight = DWRITE_FONT_WEIGHT_MEDIUM; d.size = 1.6f; d.spacing = .24f; d.color = softC[k];
+        d.text = Upper(wd + L" · " + q);
+        tm.family = fraunces; tm.weight = DWRITE_FONT_WEIGHT_EXTRA_BOLD; tm.size = 13.9f; tm.time = true; tm.color = inkC[k]; tm.margin = .6f;
+        tm.text = std::wstring(hb) + mb; tm.split = (int)wcslen(hb); tm.color2 = accC[k]; tm.weight2 = DWRITE_FONT_WEIGHT_LIGHT;
+        me.family = garamond; me.style = DWRITE_FONT_STYLE_ITALIC; me.size = 3.15f; me.color = accC[k]; me.margin = .6f;
         me.text = meal;
-        top = sc == ELVEN ? 26 : 14;   // under the elven arch's star
+        dt.family = alegreya; dt.weight = DWRITE_FONT_WEIGHT_MEDIUM; dt.size = 1.76f; dt.color = softC[k]; dt.margin = .2f;
+        dt.text = shireTxt + L" · " + greg;
+        left = true; leftX = 7.8f;
+        top = 13.9f;
         shadow = sc == STARLIT || sc == ELVEN;
         time = L"";   // no am/pm suffix
-        if (me.text.empty()) L.pop_back();
+        if (me.text.empty()) L.erase(L.begin() + 2);
     } else if (sc == REDBOOK) {
         for (auto& l : L) l.family = fell;
         lab.family = fellsc; lab.size = 2.2f; lab.spacing = .24f; lab.color = 0x9A2A1C;
@@ -1251,7 +1225,7 @@ static void BuildClock(SceneId sc) {
         y += l.margin * vh;
         float padX = l.pill ? 1.8f * vh : 0, padY = l.pill ? .7f * vh : 0;
         float bw = w + 2 * padX, bh = hgt + 2 * padY;
-        float x = left ? 9 * vw : (W - bw) / 2;
+        float x = left ? leftX * vw : (W - bw) / 2;
         placed.push_back({ lay, x + padX, y + padY, w, hgt, &l });
         box = Union(box, RectF(x, y, x + bw, y + bh));
         y += bh;
@@ -1279,6 +1253,11 @@ static void BuildClock(SceneId sc) {
             ComPtr<ID2D1SolidColorBrush> red;
             gCtx->CreateSolidColorBrush(Hex(firstColor), &red);
             p.lay->SetDrawingEffect(red.Get(), DWRITE_TEXT_RANGE{ 0, 1 });
+        }
+        if (p.l->split >= 0 && p.l->split < (int)p.l->text.size()) {
+            ComPtr<ID2D1SolidColorBrush> two;
+            gCtx->CreateSolidColorBrush(Hex(p.l->color2), &two);
+            p.lay->SetDrawingEffect(two.Get(), DWRITE_TEXT_RANGE{ (UINT32)p.l->split, (UINT32)(p.l->text.size() - p.l->split) });
         }
         if (p.l->time && !ampm.empty()) {
             ComPtr<ID2D1SolidColorBrush> sm;
@@ -1427,8 +1406,7 @@ static void DrawRegion(const RECT& R, double t) {
                 auto& b = m.layer[e->layer];
                 if (!b) continue;
                 gCtx->SetTransform(Matrix3x2F::Identity());
-                D2D1_POINT_2F o = Point2F(m.art._31, m.art._32);
-                gCtx->DrawImage(b.Get(), o, RectF(0, 0, (float)m.bw, (float)m.bh), D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+                gCtx->DrawImage(b.Get(), m.org, RectF(0, 0, (float)m.bw, (float)m.bh), D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
                 continue;
             }
             if (!Intersects(R, Inflate(TransformRect(e->now, m.art), 2))) continue;
@@ -1574,6 +1552,7 @@ static void Rebuild() {  // device, swap chain, scene, layers and clock for the 
     Layout();
     if (!CreateSwap()) return;
     delete gScene;
+    gWx = ReadWeather();
     gScene = BuildScene(gWanted);
     LoadLayers();
     for (auto& m : gMons) Log(L"monitor %ld,%ld %ldx%ld%s scene %s layers %d %d %d", m.rc.left, m.rc.top, m.rc.right - m.rc.left, m.rc.bottom - m.rc.top,
@@ -1695,7 +1674,7 @@ static void RunScript(const wchar_t* script, const std::wstring& args, bool visi
 }
 
 enum { IDM_ADAPTIVE = 100, IDM_SHIRE, IDM_REDBOOK, IDM_STARLIT, IDM_ELVEN,
-       IDM_MODERN = 200, IDM_CLASSIC, IDM_NOCLOCK, IDM_SCENE, IDM_MEALS,
+       IDM_MODERN = 200, IDM_CLASSIC, IDM_NOCLOCK, IDM_SCENE, IDM_MEALS, IDM_WEATHER,
        IDM_PREVIEW = 300, IDM_UPDATE, IDM_UNINSTALL };
 
 static void TrayMenu() {
@@ -1715,6 +1694,7 @@ static void TrayMenu() {
     AppendMenuW(m, MF_POPUP, (UINT_PTR)clock, L"Desktop clock");
     AppendMenuW(m, MF_STRING | check(gSet.enabled), IDM_SCENE, L"Moving desktop scene");
     AppendMenuW(m, MF_STRING | check(gSet.meals), IDM_MEALS, L"Hobbit mealtimes");
+    AppendMenuW(m, MF_STRING | check(gSet.weather), IDM_WEATHER, L"Weather in the scene");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, IDM_PREVIEW, L"Preview the four looks");
     AppendMenuW(m, MF_STRING, IDM_UPDATE, L"Check for updates");
@@ -1735,6 +1715,11 @@ static void TrayMenu() {
     case IDM_NOCLOCK: SetConfig(L"desktopClock", L"false"); break;
     case IDM_SCENE: SetConfig(L"livingDesktop", gSet.enabled ? L"false" : L"true"); break;
     case IDM_MEALS: SetConfig(L"meals", gSet.meals ? L"false" : L"true"); break;
+    case IDM_WEATHER:
+        SetConfig(L"weather", gSet.weather ? L"false" : L"true");
+        if (!gSet.weather) ShellExecuteW(nullptr, L"open", L"schtasks.exe", L"/Run /TN \"\\Lembas\\Lembas Sun\"", nullptr, SW_HIDE);  // fetch it now
+        gRescene = true;
+        break;
     case IDM_PREVIEW: RunScript(L"Preview-Lembas.ps1", L"", true); break;
     case IDM_UPDATE: RunScript(L"Update-Lembas.ps1", L"", true); break;
     case IDM_UNINSTALL: RunScript(L"Uninstall-Lembas.ps1", L"", true); break;
@@ -1750,9 +1735,214 @@ static void TrayMenu() {
 static UINT gTaskbarCreated;
 static const GUID kDisplayState = { 0x6fe69556, 0x704a, 0x47a0, { 0x8f, 0x24, 0xc2, 0x8d, 0x93, 0x6f, 0xda, 0x47 } };  // GUID_CONSOLE_DISPLAY_STATE
 
+// ------------------------------------------------------------------------------------ the clock panel
+// Click the desktop clock: a small panel with today's sun, when the look changes next, and the
+// Shire calendar for the week ahead. Click anywhere else (or press Esc) to close it.
+#define WM_LEMBAS_PANEL (WM_APP + 8)
+static HWND gPanel;
+static HHOOK gMouseHook;
+static ComPtr<ID2D1HwndRenderTarget> gPanelRT;
+struct PanelLine { std::wstring left, right, family; float size; DWRITE_FONT_WEIGHT weight; DWRITE_FONT_STYLE style; int color; float gap; };
+static std::vector<PanelLine> gPanelLines;
+static uint32_t gPanelCol[4];  // background, ink, accent, soft
+
+static RECT ClockOnScreen() {
+    POINT o = { 0, 0 };
+    ClientToScreen(gParent, &o);
+    return RECT{ (LONG)gClock.rc.left + o.x, (LONG)gClock.rc.top + o.y, (LONG)gClock.rc.right + o.x, (LONG)gClock.rc.bottom + o.y };
+}
+// Only clicks on the bare desktop over the clock (not on an icon, not on a window) open the panel.
+static LRESULT CALLBACK MouseLL(int code, WPARAM w, LPARAM l) {
+    if (code == HC_ACTION && w == WM_LBUTTONUP && gClock.bmp && gAttached && IsWindow(gParent)) {
+        auto* m = (MSLLHOOKSTRUCT*)l;
+        RECT r = ClockOnScreen();
+        if (PtInRect(&r, m->pt)) {
+            wchar_t cls[64] = {};
+            GetClassNameW(WindowFromPoint(m->pt), cls, 64);
+            if (!wcscmp(cls, L"SysListView32") || !wcscmp(cls, L"SHELLDLL_DefView") || !wcscmp(cls, L"WorkerW") || !wcscmp(cls, L"Progman"))
+                PostMessageW(gMsgWnd, WM_LEMBAS_PANEL, (WPARAM)m->pt.x, (LPARAM)m->pt.y);
+        }
+    }
+    return CallNextHookEx(gMouseHook, code, w, l);
+}
+static bool OnDesktopIcon(POINT pt) {
+    IAccessible* acc = nullptr;
+    VARIANT child; VariantInit(&child);
+    bool hit = false;
+    if (SUCCEEDED(AccessibleObjectFromPoint(pt, &acc, &child)) && acc) {
+        VARIANT role; VariantInit(&role);
+        if (SUCCEEDED(acc->get_accRole(child, &role)) && role.vt == VT_I4 && role.lVal == ROLE_SYSTEM_LISTITEM) hit = true;
+        VariantClear(&role);
+        acc->Release();
+    }
+    VariantClear(&child);
+    return hit;
+}
+
+static std::wstring HourMinute(int m) {
+    wchar_t b[16];
+    int h = m / 60, mi = m % 60;
+    if (Use24h()) std::swprintf(b, 16, L"%02d:%02d", h, mi);
+    else std::swprintf(b, 16, L"%d:%02d %s", (h % 12) ? h % 12 : 12, mi, h < 12 ? L"am" : L"pm");
+    return b;
+}
+static SYSTEMTIME AddDays(const SYSTEMTIME& st, int days) {
+    FILETIME ft; SystemTimeToFileTime(&st, &ft);
+    ULARGE_INTEGER u; u.LowPart = ft.dwLowDateTime; u.HighPart = ft.dwHighDateTime;
+    u.QuadPart += (ULONGLONG)days * 864000000000ULL;
+    ft.dwLowDateTime = u.LowPart; ft.dwHighDateTime = u.HighPart;
+    SYSTEMTIME o; FileTimeToSystemTime(&ft, &o);
+    return o;
+}
+static const wchar_t* kLookTitle[] = { L"Shire Morning", L"the Red Book", L"Starlit Night", L"Elven Silver" };
+
+static void PanelContent(SceneId sc) {
+    static const uint32_t cols[4][4] = {
+        { 0xFBF4E3, 0x27452A, 0x3E6A3A, 0x6A7D4E }, { 0xF6ECD2, 0x2B1E12, 0x9A2A1C, 0x6A5236 },
+        { 0x101633, 0xF4ECD8, 0xE2C687, 0x9C927B }, { 0x0E1418, 0xE6ECEE, 0xB9C6CA, 0x7D898D } };
+    int k = sc == NONE ? 1 : (int)sc;
+    for (int i = 0; i < 4; i++) gPanelCol[i] = cols[k][i];
+    std::wstring fraunces = Family({ L"Fraunces", L"Fraunces Light" }), alegreya = Family({ L"Alegreya Sans Medium", L"Alegreya Sans" });
+    std::wstring garamond = Family({ L"Cormorant Garamond", L"Cormorant Garamond Light" });
+    SYSTEMTIME st; GetLocalTime(&st);
+    int sd; std::wstring sname;
+    ShireDate(st, sd, sname);
+    gPanelLines.clear();
+    auto add = [&](std::wstring l, std::wstring r, const std::wstring& fam, float size, int color, float gap,
+                   DWRITE_FONT_WEIGHT w = DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_FONT_STYLE s = DWRITE_FONT_STYLE_NORMAL) {
+        gPanelLines.push_back({ l, r, fam, size, w, s, color, gap });
+    };
+    add(std::wstring(kWeek[st.wDayOfWeek]) + L", " + (sd ? std::to_wstring(sd) + L" " : L"") + sname, L"", fraunces, 22, 1, 0, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+    add(DateFmt(st, L"dddd d MMMM yyyy"), L"", alegreya, 13, 3, 2);
+    // today's sun, and the next change of look
+    SunDay d = SunToday(st, gSet.lat, gSet.lon);
+    add(L"TODAY'S SUN", L"", alegreya, 11, 2, 16);
+    add(L"Sunrise " + HourMinute(d.rise) + L"  ·  Sunset " + HourMinute(d.set), L"", alegreya, 14, 1, 6);
+    if (gSet.adaptive && gForced == NONE) {
+        int m = st.wHour * 60 + st.wMinute;
+        struct B { int at; SceneId to; } bs[] = { { d.rise, SHIRE }, { d.evening, REDBOOK }, { d.set, STARLIT }, { 23 * 60, ELVEN }, { 4 * 60, STARLIT } };
+        int best = -1, bestDelta = 99999;
+        for (int i = 0; i < 5; i++) { int dl = (bs[i].at - m + 1440) % 1440; if (dl == 0) dl = 1440; if (dl < bestDelta) { bestDelta = dl; best = i; } }
+        std::wstring now = kLookTitle[(int)SunScene(st)];
+        now[0] = (wchar_t)towupper(now[0]);
+        add(now + L" until " + HourMinute(bs[best].at) + L", then " + kLookTitle[(int)bs[best].to], L"", garamond, 17, 2, 4, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_ITALIC);
+    } else {
+        add(L"Showing " + std::wstring(kLookTitle[k]) + L" (chosen in Lembas)", L"", garamond, 17, 2, 4, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_ITALIC);
+    }
+    // the week ahead in the Shire calendar
+    add(L"THE WEEK AHEAD", L"", alegreya, 11, 2, 16);
+    for (int i = 0; i < 7; i++) {
+        SYSTEMTIME dd = AddDays(st, i);
+        int sdd; std::wstring sn;
+        ShireDate(dd, sdd, sn);
+        add(i == 0 ? L"Today" : DateFmt(dd, L"ddd d MMM"), std::wstring(kWeek[dd.wDayOfWeek]) + L" · " + (sdd ? std::to_wstring(sdd) + L" " : L"") + sn,
+            alegreya, 14, i == 0 ? 1 : 3, i == 0 ? 6 : 4);
+    }
+    add(L"Click anywhere else to close", L"", alegreya, 11, 3, 14);
+}
+
+static float PanelScale() { return GetDpiForWindow(gPanel ? gPanel : gMsgWnd) / 96.f; }
+static ComPtr<IDWriteTextLayout> PanelLayout(const std::wstring& t, const PanelLine& l, float s) {
+    ComPtr<IDWriteTextFormat> f;
+    gDWrite->CreateTextFormat(l.family.c_str(), gFonts.Get(), l.weight, l.style, DWRITE_FONT_STRETCH_NORMAL, l.size * s, L"en", &f);
+    f->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    ComPtr<IDWriteTextLayout> lay;
+    gDWrite->CreateTextLayout(t.c_str(), (UINT32)t.size(), f.Get(), 2000, 200, &lay);
+    return lay;
+}
+static float PanelHeight(float s, float& width) {
+    float y = 22 * s, w = 0;
+    for (auto& l : gPanelLines) {
+        y += l.gap * s;
+        DWRITE_TEXT_METRICS m; PanelLayout(l.left, l, s)->GetMetrics(&m);
+        float lw = m.width;
+        if (!l.right.empty()) { DWRITE_TEXT_METRICS r; PanelLayout(l.right, l, s)->GetMetrics(&r); lw = 104 * s + r.width; }
+        w = std::max(w, lw);
+        y += m.height;
+    }
+    width = std::max(w + 48 * s, 320 * s);
+    return y + 20 * s;
+}
+static void PaintPanel() {
+    if (!gPanel) return;
+    RECT rc; GetClientRect(gPanel, &rc);
+    if (!gPanelRT) {
+        gFactory->CreateHwndRenderTarget(RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT, PixelFormat(), 96, 96),
+                                         HwndRenderTargetProperties(gPanel, SizeU(rc.right, rc.bottom)), &gPanelRT);
+        if (!gPanelRT) return;
+    }
+    float s = PanelScale();
+    ComPtr<ID2D1SolidColorBrush> br;
+    gPanelRT->CreateSolidColorBrush(Hex(gPanelCol[1]), &br);
+    gPanelRT->BeginDraw();
+    gPanelRT->Clear(Hex(gPanelCol[0]));
+    float y = 22 * s;
+    for (auto& l : gPanelLines) {
+        y += l.gap * s;
+        br->SetColor(Hex(gPanelCol[l.color]));
+        auto lay = PanelLayout(l.left, l, s);
+        gPanelRT->DrawTextLayout(Point2F(24 * s, y), lay.Get(), br.Get());
+        if (!l.right.empty()) {
+            br->SetColor(Hex(gPanelCol[1]));
+            gPanelRT->DrawTextLayout(Point2F(128 * s, y), PanelLayout(l.right, l, s).Get(), br.Get());
+        }
+        DWRITE_TEXT_METRICS m; lay->GetMetrics(&m);
+        y += m.height;
+    }
+    if (gPanelRT->EndDraw() == D2DERR_RECREATE_TARGET) gPanelRT.Reset();
+}
+static LRESULT CALLBACK PanelProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    switch (m) {
+    case WM_PAINT: { PAINTSTRUCT ps; BeginPaint(h, &ps); PaintPanel(); EndPaint(h, &ps); return 0; }
+    case WM_ACTIVATE: if (LOWORD(w) == WA_INACTIVE) DestroyWindow(h); return 0;
+    case WM_KEYDOWN: if (w == VK_ESCAPE) DestroyWindow(h); return 0;
+    case WM_LBUTTONUP: DestroyWindow(h); return 0;
+    case WM_DESTROY: gPanel = nullptr; gPanelRT.Reset(); return 0;
+    }
+    return DefWindowProcW(h, m, w, l);
+}
+static void ShowPanel(POINT at) {
+    if (gPanel) { DestroyWindow(gPanel); return; }
+    if (OnDesktopIcon(at)) return;
+    PanelContent(gWanted);
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSW wc = {};
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.lpfnWndProc = PanelProc;
+        wc.lpszClassName = L"LembasClockPanel";
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        RegisterClassW(&wc);
+        registered = true;
+    }
+    float s = GetDpiForSystem() / 96.f, width;
+    float height = PanelHeight(s, width);
+    RECT clock = ClockOnScreen();
+    HMONITOR hm = MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi = { sizeof mi }; GetMonitorInfoW(hm, &mi);
+    int x = std::max((int)mi.rcWork.left + 8, std::min((int)clock.left + (int)(24 * s), (int)mi.rcWork.right - (int)width - 8));
+    int y = std::min((int)clock.bottom, (int)mi.rcWork.bottom - (int)height - 8);
+    gPanel = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"LembasClockPanel", L"Lembas", WS_POPUP,
+                             x, y, (int)width, (int)height, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (!gPanel) return;
+    DWORD round = 2;  // DWMWCP_ROUND (Windows 11)
+    DwmSetWindowAttribute(gPanel, 33, &round, sizeof round);
+    BOOL dark = gWanted == STARLIT || gWanted == ELVEN;
+    DwmSetWindowAttribute(gPanel, 20, &dark, sizeof dark);  // DWMWA_USE_IMMERSIVE_DARK_MODE
+    ShowWindow(gPanel, SW_SHOW);
+    SetForegroundWindow(gPanel);
+}
+static void UpdateMouseHook() {
+    bool want = gSet.clock && gAttached;
+    if (want && !gMouseHook) gMouseHook = SetWindowsHookExW(WH_MOUSE_LL, MouseLL, GetModuleHandleW(nullptr), 0);
+    if (!want && gMouseHook) { UnhookWindowsHookEx(gMouseHook); gMouseHook = nullptr; }
+}
+
 static LRESULT CALLBACK MsgProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     if (m == gTaskbarCreated) { gReattach = true; TrayAdd(); return 0; }
     switch (m) {
+    case WM_LEMBAS_PANEL:
+        ShowPanel(POINT{ (LONG)w, (LONG)l }); return 0;
     case WM_LEMBAS_TRAY:
         if (LOWORD(l) == WM_RBUTTONUP || LOWORD(l) == WM_LBUTTONUP || LOWORD(l) == WM_CONTEXTMENU) TrayMenu();
         return 0;
@@ -1933,6 +2123,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int) {
             nextCheck = 0;
         }
         if (gAttached && (!IsWindow(gParent) || !IsWindow(gWnd))) { gReattach = true; continue; }
+        if (gRescene) { gRescene = false; if (gWanted != NONE && gAttached) Rebuild(); }
+        UpdateMouseHook();
 
         static double nextReport = now + 60;
         if (now >= nextReport) {
