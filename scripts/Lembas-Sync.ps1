@@ -20,7 +20,10 @@ $ErrorActionPreference = 'Stop'
 $Dest = Split-Path -Parent $PSScriptRoot
 $configFile = Join-Path $Dest 'lembas.json'
 $roam = Join-Path $env:APPDATA 'Lembas'
-$clientFile = Join-Path $roam 'google-client.json'
+# Lembas's Google sign-in ID: kept on this PC only (never in the public code)
+$clientFile = @((Join-Path $env:USERPROFILE '.lembas\google-client.json'), (Join-Path $roam 'google-client.json')) |
+    Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not $clientFile) { $clientFile = Join-Path $env:USERPROFILE '.lembas\google-client.json' }
 $tokenFile = Join-Path $roam 'google-token.dat'
 $stateFile = Join-Path $Dest 'sync-state.json'
 $logFile = Join-Path $Dest 'sync.log'
@@ -35,12 +38,12 @@ function Log($text) {
 function Say($text, $color = 'Gray') { if (-not $Quiet) { Write-Host "  $text" -ForegroundColor $color } }
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-if (-not (Test-Path $clientFile)) {
+if (-not (Test-Path -LiteralPath $clientFile)) {
     Log "no Google sign-in ID on this PC ($clientFile); sync is off"
     if ($SignIn) { Say "Lembas can't sign in to Google on this PC yet: its sign-in ID is missing." 'Yellow'; Start-Sleep 4 }
     exit 0
 }
-$client = Get-Content $clientFile -Raw | ConvertFrom-Json
+$client = Get-Content -LiteralPath $clientFile -Raw | ConvertFrom-Json
 
 # ------------------------------------------------------------------ the sign-in (kept with Windows' own encryption, DPAPI)
 function Save-Refresh([string]$token) {
@@ -76,11 +79,9 @@ if ($SignIn) {
     $challenge = B64Url ([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::ASCII.GetBytes($verifier)))
     $stateBytes = New-Object byte[] 16; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($stateBytes)
     $state = B64Url $stateBytes
-    $tcp = New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback, 0); $tcp.Start(); $port = $tcp.LocalEndpoint.Port; $tcp.Stop()
+    # a one-off listener on this PC only (127.0.0.1), for Google's answer
+    $tcp = New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback, 0); $tcp.Start(); $port = $tcp.LocalEndpoint.Port
     $redirect = "http://127.0.0.1:$port/"
-    $listener = New-Object Net.HttpListener
-    $listener.Prefixes.Add($redirect)
-    $listener.Start()
     $url = "https://accounts.google.com/o/oauth2/v2/auth?response_type=code&access_type=offline&prompt=consent" +
         "&client_id=$([uri]::EscapeDataString($client.client_id))&redirect_uri=$([uri]::EscapeDataString($redirect))" +
         "&scope=$([uri]::EscapeDataString($Scope))&code_challenge=$challenge&code_challenge_method=S256&state=$state"
@@ -88,22 +89,40 @@ if ($SignIn) {
     Say "LEMBAS SYNC" 'Yellow'
     Say "Your browser is opening Google's sign-in. Choose your account and allow Lembas"
     Say "to keep its settings file in your Drive. (It can't see your other files.)"
+    Log "sign-in: waiting for the browser on port $port"
     Start-Process $url
-    $task = $listener.GetContextAsync()
-    if (-not $task.Wait([TimeSpan]::FromMinutes(5))) { $listener.Stop(); Say "No answer from the browser; try again." 'Yellow'; Start-Sleep 4; exit 1 }
-    $ctx = $task.Result
-    Add-Type -AssemblyName System.Web
-    $qs = [Web.HttpUtility]::ParseQueryString($ctx.Request.Url.Query)
-    $ok = $qs['code'] -and $qs['state'] -eq $state
-    $page = if ($ok) { 'Lembas is signed in. You can close this tab.' } else { 'Lembas was not signed in. You can close this tab and try again.' }
-    $html = [Text.Encoding]::UTF8.GetBytes("<html><body style='font-family:Segoe UI;background:#0B1020;color:#F4ECD8;display:flex;align-items:center;justify-content:center;height:100vh;margin:0'><h2 style='font-weight:400'>$page</h2></body></html>")
-    $ctx.Response.ContentType = 'text/html; charset=utf-8'
-    $ctx.Response.OutputStream.Write($html, 0, $html.Length); $ctx.Response.Close(); $listener.Stop()
+    $code = $null; $err = $null; $deadline = (Get-Date).AddMinutes(5)
+    while (-not $code -and -not $err -and (Get-Date) -lt $deadline) {
+        if (-not $tcp.Pending()) { Start-Sleep -Milliseconds 200; continue }
+        $client2 = $tcp.AcceptTcpClient()
+        $stream = $client2.GetStream()
+        $reader = New-Object IO.StreamReader($stream)
+        $first = $reader.ReadLine()          # GET /?state=..&code=.. HTTP/1.1
+        $target = if ($first -match '^GET (\S+)') { $Matches[1] } else { '/' }
+        $query = @{}
+        if ($target.Contains('?')) {
+            foreach ($pair in $target.Substring($target.IndexOf('?') + 1).Split('&')) {
+                $kv = $pair.Split('=', 2)
+                if ($kv.Count -eq 2) { $query[$kv[0]] = [uri]::UnescapeDataString($kv[1].Replace('+', ' ')) }
+            }
+        }
+        $ok = $query['code'] -and $query['state'] -eq $state
+        if ($ok) { $code = $query['code'] } elseif ($query['error']) { $err = $query['error'] }
+        $page = if ($ok) { 'Lembas is signed in. You can close this tab.' } elseif ($err) { 'Lembas was not signed in. You can close this tab and try again.' } else { 'Lembas' }
+        $html = "<html><body style='font-family:Segoe UI;background:#0B1020;color:#F4ECD8;display:flex;align-items:center;justify-content:center;height:100vh;margin:0'><h2 style='font-weight:400'>$page</h2></body></html>"
+        $bytes = [Text.Encoding]::UTF8.GetBytes("HTTP/1.1 200 OK`r`nContent-Type: text/html; charset=utf-8`r`nContent-Length: $([Text.Encoding]::UTF8.GetByteCount($html))`r`nConnection: close`r`n`r`n$html")
+        $stream.Write($bytes, 0, $bytes.Length); $stream.Flush(); $client2.Close()
+    }
+    $tcp.Stop()
+    $ok = [bool]$code
+    $qs = @{ code = $code; error = $err }
     if (-not $ok) { Log "sign-in cancelled ($($qs['error']))"; Say "Not signed in." 'Yellow'; Start-Sleep 3; exit 1 }
+    try {
     $tok = Invoke-RestMethod -Method Post -Uri 'https://oauth2.googleapis.com/token' -Body @{
         code = $qs['code']; client_id = $client.client_id; client_secret = $client.client_secret
         redirect_uri = $redirect; grant_type = 'authorization_code'; code_verifier = $verifier
     }
+    } catch { Log "sign-in: Google refused the code: $($_.ErrorDetails.Message) $($_.Exception.Message)"; Say "Google didn't accept the sign-in; try again." 'Yellow'; Start-Sleep 5; exit 1 }
     if (-not $tok.refresh_token) { Log "sign-in: no refresh token"; Say "Google didn't hand back a lasting sign-in; try again." 'Yellow'; Start-Sleep 4; exit 1 }
     Save-Refresh $tok.refresh_token
     Remove-Item $stateFile -Force -ErrorAction SilentlyContinue
