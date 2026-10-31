@@ -79,7 +79,9 @@ GOOD TO KNOW
    If you change time zone, Lembas follows. To use your own location instead, run Install
    Lembas from a terminal with  -Latitude <yours> -Longitude <yours>.
  - The Lembas icon by the clock (bottom right; it may be under the ^ arrow) changes the look,
-   the desktop clock (Modern, Classic or off), the moving scene, the weather and the mealtimes, and has
+   the desktop clock (Modern, Classic or off), the moving scene, the weather and the mealtimes,
+   Hold the scene still for an hour, Keep today's panel on the desktop, One view across your
+   screens, Lembas as the screensaver and Sync with your phone, and has
    Preview, Check for updates and Uninstall.
  - The desktop clock's Modern style uses the same type as the phone launcher and the watch face:
    the day, then the time (heavy hours, light minutes), the mealtime and the Shire date, in the
@@ -91,6 +93,15 @@ GOOD TO KNOW
    (never indoors by the fire). It asks Open-Meteo (free, no account) about your time zone's
    main city at most once an hour; nothing else is sent. Tray menu > Weather in the scene
    turns it off, and then nothing is fetched.
+ - The light of the hour: the Shire warms through the afternoon, Starlit Night deepens toward
+   11pm, and a pink and amber glow rises around sunrise and sunset. The moon rises and sets when
+   it really does; on a windy day the clouds race; now and then a fox, a boat or an owl visits.
+ - Sync with your phone (tray, or Start > Lembas > Sync with your phone): sign in with your
+   Google account once in your browser, and the look and its settings stay the same on this PC,
+   your phone and your watch. Lembas keeps one small settings file in a hidden folder of your
+   Google Drive that only Lembas can see. The sign-in is kept encrypted for your Windows account.
+   Turn it off from the tray.
+ - Lembas as the screensaver (tray): the scene and its clock, full screen. Turn it off the same way.
  - Wide screens: the panoramas are drawn wider than 16:9, so ultrawide monitors and several
    screens side by side see more of the scene instead of a crop.
  - Lembas Desktop starts the sun task at the exact minute a look changes. The task also checks
@@ -101,11 +112,11 @@ GOOD TO KNOW
  - On ARM PCs (Snapdragon), File Explorer's file list and sidebar stay plain black or white:
    the mod that tints them doesn't support ARM yet. Everything else works.
  - Lembas Desktop is easy on the battery. Only the small moving parts are redrawn, at 24 frames
-   a second on mains power and 12 on battery. It stops while windows cover the desktop, the
-   screen is off or locked, or Battery saver is on.
+   a second on mains power and 8 on battery. It stops while windows cover the desktop, a game,
+   film or presentation is full screen, the screen is off or locked, or Battery saver is on.
    Start > Lembas > Change look turns it (or just its clock) off. Each minute it logs its CPU use
    to desktop.log.
- - Logs: %LOCALAPPDATA%\Lembas\install.log, sun.log and desktop.log.
+ - Logs: %LOCALAPPDATA%\Lembas\install.log, sun.log, sync.log and desktop.log.
 
 
 CREDITS
