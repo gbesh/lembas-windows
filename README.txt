@@ -42,7 +42,7 @@ WHAT CHANGES
   Wallpaper and lock screen   a wide 4K panorama for each look, in each of the four seasons
   Sign-in screen              the look's picture, clear instead of blurred
   Desktop (Lembas Desktop)    the scene moves gently behind your icons (clouds, smoke, the fire,
-                              stars, the real moon, lanterns, waterfalls), with the weather
+                              stars, the real moon, lanterns, mist), with the weather
                               outside if you like; the clock in the corner shows the day, time,
                               mealtime and Shire date; click it for sunrise, sunset, the next
                               look and the week ahead
@@ -102,7 +102,7 @@ GOOD TO KNOW
    the mod that tints them doesn't support ARM yet. Everything else works.
  - Lembas Desktop is easy on the battery. Only the small moving parts are redrawn, at 24 frames
    a second on mains power and 12 on battery. It stops while windows cover the desktop, the
-   screen is off or locked, Battery saver is on, or Animation effects are off in Settings.
+   screen is off or locked, or Battery saver is on.
    Start > Lembas > Change look turns it (or just its clock) off. Each minute it logs its CPU use
    to desktop.log.
  - Logs: %LOCALAPPDATA%\Lembas\install.log, sun.log and desktop.log.

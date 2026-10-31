@@ -5,8 +5,8 @@
 // Battery: the still parts of each scene are pre-rendered images; only the small moving
 // pieces are redrawn, and only the parts of the screen they touch are presented (flip-model
 // dirty rectangles). It draws 24 frames a second on mains power, 12 on battery, and stops
-// completely when the desktop is covered, the screen is off or locked, Battery saver is on,
-// or Windows' "Animation effects" setting is off (the clock still turns over each minute).
+// completely when the desktop is covered, the screen is off or locked, or Battery saver is on
+// (the clock still turns over each minute).
 //
 // It follows whichever Lembas wallpaper Lembas Sun has set, so the four looks switch with it.
 // If the wallpaper isn't a Lembas one, it steps aside.
@@ -515,19 +515,6 @@ struct CabinWindow : Element {  // the cabin's lit windows, flickering now and t
 };
 
 // --- Elven Silver
-struct Fall : Element {  // a gleam travelling down a waterfall
-    float x, y, w, h, dur, off;
-    Track op{ {0, .2f, 1}, {0, .9f, 0}, LINEAR };
-    Fall(float x_, float y_, float w_, float h_, float d, float o) : x(x_), y(y_), w(w_), h(h_), dur(d), off(o) { smooth = true; }
-    float Y(double t) { return y - 120 + (h + 120) * Phase(t, dur, off); }
-    D2D1_RECT_F Bounds(double t) override { float yy = Y(t); return RectF(x - w, yy - 2, x + w, yy + 42); }
-    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
-        float yy = Y(t);
-        gCtx->SetTransform(art);
-        Solid(0xF2FAFC, .7f * op(Phase(t, dur, off)));
-        gCtx->FillRoundedRectangle(RoundedRect(RectF(x - w * .2f, yy, x + w * .6f, yy + 40), w * .4f, w * .4f), gBrush.Get());
-    }
-};
 struct Mist : Element {  // a band of mist drifting along the valley
     ComPtr<ID2D1LinearGradientBrush> b;
     float y, h;
@@ -700,9 +687,6 @@ static Scene* BuildScene(SceneId id) {
         Rng r(1955);
         E.push_back(new LayerEl(0));
         E.push_back(new Glow(1160, 150, 90, { {0, Hex(0xBFE3EC, .5f)}, {1, Hex(0xBFE3EC, 0)} }, 6));
-        const float falls[4][4] = { {1600, 480, 8, 420}, {1652, 430, 5, 470}, {1708, 390, 12, 520}, {-120, 520, 7, 380} };
-        for (int i = 0; i < 4; i++) for (int k = 0; k < 3; k++)
-            E.push_back(new Fall(falls[i][0], falls[i][1], falls[i][2], falls[i][3], 2.2f + i * .3f, k * .8f + i * .3f));
         E.push_back(new Mist(640, 140));
         E.push_back(new LayerEl(1));
         const float lamps[7][2] = { {880, 760}, {1030, 700}, {1180, 740}, {960, 820}, {1110, 800}, {1250, 830}, {760, 820} };
@@ -1602,9 +1586,9 @@ static void CheckConditions() {
     SYSTEM_POWER_STATUS ps;
     bool saver = false, battery = false;
     if (GetSystemPowerStatus(&ps)) { saver = (ps.SystemStatusFlag & 1) != 0; battery = ps.ACLineStatus == 0; }
-    BOOL anim = TRUE;
-    SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &anim, 0);
-    gStill = saver || !anim;
+    // Only Battery saver holds the scene still. (Windows' "Animation effects" switch is often off
+    // just to make menus snappier; Lembas's own tray switch turns the moving scene off.)
+    gStill = saver;
     gFps = battery ? 12 : 24;
 }
 static bool Visible() { return gAttached && gScene && !gLocked && !gDisplayOff && !gCovered; }

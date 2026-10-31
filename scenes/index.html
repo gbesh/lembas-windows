@@ -312,12 +312,6 @@ function elven() {
     <path d="M${X0 - 20},1090 L${X0 - 20},420 C-200,400 -60,440 0,440 C60,440 140,500 200,580 C260,660 300,760 330,1090Z" fill="#11201F"/>`);
   else add('back', `<path d="M-20,2410 L-20,1100 C60,1140 140,1260 200,1400 C260,1540 300,1700 330,2410 Z" fill="#0B1418"/>
     <path d="M1100,2410 L1100,1000 C1020,1060 960,1200 920,1360 C880,1520 860,1700 840,2410Z" fill="#0B1418"/>`);
-  // waterfalls (the water moves)
-  const falls = PC ? [[1600, 480, 8, 420], [1652, 430, 5, 470], [1708, 390, 12, 520], [-120, 520, 7, 380]] : [[960, 1300, 8, 520], [1000, 1250, 12, 600]];
-  falls.forEach(([x, y, w, h], i) => {
-    add('back', `<path d="M${x},${y} q${w * .2},${h * .5} -${w * 1.5},${h} h${w * 4} q-${w * 1.6},-${h * .5} -${w * 1.5},-${h}z" fill="url(#fall)" opacity=".8"/><ellipse cx="${x + w * .3}" cy="${y + h}" rx="${w * 6}" ry="${w * 1.6}" fill="#DDF2F6" opacity=".12"/>`);
-    for (let k = 0; k < 3; k++) add('under', `<rect class="fall" style="animation-duration:${2.2 + i * .3}s;animation-delay:-${k * .8 + i * .3}s" x="${x - w * .2}" y="${y}" width="${w * .8}" height="40" rx="${w * .4}" fill="#F2FAFC" opacity=".7"/>`);
-  });
   add('back', `<rect x="${X0}" y="${PC ? 560 : 1300}" width="${X1 - X0}" height="${PC ? 160 : 200}" fill="url(#mist)" opacity=".6"/>`);
   add('under', `<rect class="mist" x="${X0 - 200}" y="${PC ? 640 : 1500}" width="${X1 - X0 + 400}" height="${PC ? 140 : 220}" fill="url(#mist)" opacity=".5"/>`);
   // the knoll the grove stands on
