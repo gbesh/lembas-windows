@@ -45,6 +45,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <atomic>
 
 using Microsoft::WRL::ComPtr;
 using namespace D2D1;
@@ -1496,6 +1497,10 @@ static ULONGLONG gPauseUntil = 0;  // "Hold still for an hour" (the tray)
 static long long gStatFrames = 0, gStatPixels = 0;  // for the once-a-minute power report
 static std::vector<RECT> gPrevDirty;   // what changed in the previous frame (the other buffer lacks it)
 static int gFullFrames = 2;            // full repaints still needed (one per buffer)
+// The part of the desktop no window covers, as a bounding box in canvas pixels: only what moves
+// inside it is drawn (windows side by side or snapped can hide it all between them).
+static RECT gVisBox = { 0, 0, 0, 0 };
+static bool gRecheck = false;   // a window moved, opened, closed or was minimised (or the scene was rebuilt): look again now
 
 static RECT ToRect(const D2D1_RECT_F& r) {
     return { (LONG)std::floor(r.left), (LONG)std::floor(r.top), (LONG)std::ceil(r.right), (LONG)std::ceil(r.bottom) };
@@ -1587,7 +1592,9 @@ static bool Render(bool animate, bool clockChanged, const D2D1_RECT_F& oldClock)
     std::vector<RECT> draw = cur;
     if (!full) draw.insert(draw.end(), gPrevDirty.begin(), gPrevDirty.end());
     else draw = { RECT{ 0, 0, gCanvasW, gCanvasH } };
+    if (!full) for (auto& r : draw) { RECT x; if (!IntersectRect(&x, &r, &gVisBox)) x = { 0, 0, 0, 0 }; r = x; }   // hidden behind windows: skip it
     draw.erase(std::remove_if(draw.begin(), draw.end(), [](const RECT& r) { return r.right <= r.left || r.bottom <= r.top; }), draw.end());
+    if (!full && draw.empty()) { gPrevDirty = cur; return true; }
     MergeRects(draw);
 
     gCtx->SetTarget(gTarget.Get());
@@ -1702,6 +1709,7 @@ static void Rebuild() {  // device, swap chain, scene, layers and clock for the 
     gClockMinute = -1;
     gPrevDirty.clear();
     gFullFrames = 2;
+    gRecheck = true;
     PinPanel();
 }
 
@@ -1719,7 +1727,7 @@ static void Stop() {
 static bool gLocked = false, gDisplayOff = false, gCovered = false, gStill = false;
 
 static BOOL CALLBACK CoverEnum(HWND h, LPARAM lp) {
-    auto* covered = (std::vector<bool>*)lp;
+    HRGN open = (HRGN)lp;
     if (!IsWindowVisible(h) || IsIconic(h)) return TRUE;
     DWORD pid; GetWindowThreadProcessId(h, &pid);
     if (pid == GetCurrentProcessId()) return TRUE;
@@ -1732,16 +1740,53 @@ static BOOL CALLBACK CoverEnum(HWND h, LPARAM lp) {
     if (!wcscmp(cls, L"Progman") || !wcscmp(cls, L"WorkerW") || !wcscmp(cls, L"Shell_TrayWnd") || !wcscmp(cls, L"Shell_SecondaryTrayWnd")) return TRUE;
     RECT r;
     if (FAILED(DwmGetWindowAttribute(h, DWMWA_EXTENDED_FRAME_BOUNDS, &r, sizeof r))) GetWindowRect(h, &r);
-    for (size_t i = 0; i < gMons.size(); i++) {
-        const RECT& wk = gMons[i].work;
-        if (r.left <= wk.left + 2 && r.top <= wk.top + 2 && r.right >= wk.right - 2 && r.bottom >= wk.bottom - 2) (*covered)[i] = true;
+    if (r.right > r.left && r.bottom > r.top) {
+        HRGN w = CreateRectRgn(r.left, r.top, r.right, r.bottom);
+        CombineRgn(open, open, w, RGN_DIFF);
+        DeleteObject(w);
     }
     return TRUE;
 }
+// How many pixels a region holds (its rectangles don't overlap).
+static long long RegionArea(HRGN rg) {
+    DWORD n = GetRegionData(rg, 0, nullptr);
+    if (!n) return 0;
+    std::vector<char> buf(n);
+    auto* d = (RGNDATA*)buf.data();
+    if (!GetRegionData(rg, n, d)) return 0;
+    long long a = 0;
+    auto* rc = (RECT*)d->Buffer;
+    for (DWORD i = 0; i < d->rdh.nCount; i++) a += (long long)(rc[i].right - rc[i].left) * (rc[i].bottom - rc[i].top);
+    return a;
+}
 static void CheckConditions() {
-    std::vector<bool> covered(gMons.size(), false);
-    if (!gMons.empty()) EnumWindows(CoverEnum, (LPARAM)&covered);
-    gCovered = !gMons.empty() && std::all_of(covered.begin(), covered.end(), [](bool b) { return b; });
+    RECT oldBox = gVisBox;
+    gCovered = false;
+    gVisBox = { 0, 0, 0, 0 };
+    if (gSaver) gVisBox = { 0, 0, (LONG)gCanvasW, (LONG)gCanvasH };
+    else if (!gMons.empty()) {
+        HRGN open = CreateRectRgn(0, 0, 0, 0);
+        long long total = 0;
+        for (auto& m : gMons) {
+            HRGN w = CreateRectRgn(m.work.left, m.work.top, m.work.right, m.work.bottom);
+            CombineRgn(open, open, w, RGN_OR);
+            DeleteObject(w);
+            total += (long long)(m.work.right - m.work.left) * (m.work.bottom - m.work.top);
+        }
+        EnumWindows(CoverEnum, (LPARAM)open);
+        // a sliver between two windows doesn't count (less than a fifth of a percent of the screen)
+        if (RegionArea(open) * 500 < total) gCovered = true;
+        else {
+            RECT b; GetRgnBox(open, &b);
+            POINT o = { 0, 0 };   // screen -> canvas
+            if (gParent) ScreenToClient(gParent, &o);
+            gVisBox = Clip(RECT{ b.left + o.x - 2, b.top + o.y - 2, b.right + o.x + 2, b.bottom + o.y + 2 });
+        }
+        DeleteObject(open);
+    }
+    // more of the desktop showing than was drawn: draw it all again
+    RECT u;
+    if (!gCovered && (!UnionRect(&u, &oldBox, &gVisBox) || !EqualRect(&u, &oldBox))) gFullFrames = std::max(gFullFrames, 2);
     // a game, a film or a presentation full screen on any monitor: hold still (nothing to see, nothing to spend)
     QUERY_USER_NOTIFICATION_STATE qs;
     if (!gSaver && SUCCEEDED(SHQueryUserNotificationState(&qs)) && (qs == QUNS_RUNNING_D3D_FULL_SCREEN || qs == QUNS_BUSY || qs == QUNS_PRESENTATION_MODE)) gCovered = true;
@@ -1943,6 +1988,7 @@ static const GUID kDisplayState = { 0x6fe69556, 0x704a, 0x47a0, { 0x8f, 0x24, 0x
 #define WM_LEMBAS_RELOAD (WM_APP + 9)   // settings changed elsewhere (sync): read them again
 static HWND gPanel;
 static HHOOK gMouseHook;
+static std::atomic<LONG> gClockL{ 0 }, gClockT{ 0 }, gClockR{ 0 }, gClockB{ 0 };   // the clock on screen (for the click watcher's thread)
 static ComPtr<ID2D1HwndRenderTarget> gPanelRT;
 struct PanelLine { std::wstring left, right, family; float size; DWRITE_FONT_WEIGHT weight; DWRITE_FONT_STYLE style; int color; float gap; };
 static std::vector<PanelLine> gPanelLines;
@@ -1955,9 +2001,9 @@ static RECT ClockOnScreen() {
 }
 // Only clicks on the bare desktop over the clock (not on an icon, not on a window) open the panel.
 static LRESULT CALLBACK MouseLL(int code, WPARAM w, LPARAM l) {
-    if (code == HC_ACTION && w == WM_LBUTTONUP && gClock.bmp && gAttached && IsWindow(gParent)) {
+    if (code == HC_ACTION && w == WM_LBUTTONUP) {
         auto* m = (MSLLHOOKSTRUCT*)l;
-        RECT r = ClockOnScreen();
+        RECT r = { gClockL, gClockT, gClockR, gClockB };
         if (PtInRect(&r, m->pt)) {
             wchar_t cls[64] = {};
             GetClassNameW(WindowFromPoint(m->pt), cls, 64);
@@ -2174,10 +2220,33 @@ static void PinPanel() {
     InvalidateRect(gPanel, nullptr, FALSE);
 }
 
+// The click watcher runs on a thread of its own that does nothing else, so a mouse movement never
+// waits on a frame being drawn (Windows holds every mouse movement until a low-level hook answers),
+// and it's on only while the desktop clock can actually be seen.
+static DWORD gHookThread = 0;
+#define WM_LEMBAS_HOOK (WM_APP + 21)
+static DWORD WINAPI HookThread(void*) {
+    MSG m;
+    PeekMessageW(&m, nullptr, 0, 0, PM_NOREMOVE);   // make the message queue
+    while (GetMessageW(&m, nullptr, 0, 0) > 0) {
+        if (m.message == WM_LEMBAS_HOOK) {
+            if (m.wParam && !gMouseHook) gMouseHook = SetWindowsHookExW(WH_MOUSE_LL, MouseLL, GetModuleHandleW(nullptr), 0);
+            if (!m.wParam && gMouseHook) { UnhookWindowsHookEx(gMouseHook); gMouseHook = nullptr; }
+        }
+        DispatchMessageW(&m);
+    }
+    if (gMouseHook) UnhookWindowsHookEx(gMouseHook);
+    return 0;
+}
 static void UpdateMouseHook() {
-    bool want = gSet.clock && gAttached;
-    if (want && !gMouseHook) gMouseHook = SetWindowsHookExW(WH_MOUSE_LL, MouseLL, GetModuleHandleW(nullptr), 0);
-    if (!want && gMouseHook) { UnhookWindowsHookEx(gMouseHook); gMouseHook = nullptr; }
+    bool want = gSet.clock && gAttached && gScene && !gLocked && !gDisplayOff && !gCovered;
+    RECT r = want && gClock.bmp ? ClockOnScreen() : RECT{ 0, 0, 0, 0 };
+    gClockL = r.left; gClockT = r.top; gClockR = r.right; gClockB = r.bottom;
+    static bool on = false;
+    if (want == on) return;
+    if (!gHookThread) CloseHandle(CreateThread(nullptr, 0, HookThread, nullptr, 0, &gHookThread));
+    for (int i = 0; i < 50 && !PostThreadMessageW(gHookThread, WM_LEMBAS_HOOK, want, 0); i++) Sleep(2);   // until its queue exists
+    on = want;
 }
 
 static LRESULT CALLBACK MsgProc(HWND h, UINT m, WPARAM w, LPARAM l) {
@@ -2186,7 +2255,13 @@ static LRESULT CALLBACK MsgProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case WM_LEMBAS_PANEL:
         ShowPanel(POINT{ (LONG)w, (LONG)l }); return 0;
     case WM_LEMBAS_RELOAD:
-        LoadSettings(); gClockMinute = -1; gReload = true; gRescene = true; return 0;
+    {   // the look itself arrives as a wallpaper change; rebuild the scene only for what it shows
+        bool wx = gSet.weather, span = gSet.span;
+        LoadSettings(); gClockMinute = -1; gReload = true;
+        if (gSet.weather != wx) gRescene = true;
+        if (gSet.span != span) gReattach = true;
+        return 0;
+    }
     case WM_LEMBAS_TRAY:
         if (LOWORD(l) == WM_RBUTTONUP || LOWORD(l) == WM_LBUTTONUP || LOWORD(l) == WM_CONTEXTMENU) TrayMenu();
         return 0;
@@ -2380,6 +2455,14 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int) {
         TrayAdd();
     }
 
+    if (!gSaver) {
+        WINEVENTPROC look = [](HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, DWORD) { gRecheck = true; };
+        const DWORD flags = WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS;
+        SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, look, 0, 0, flags);
+        SetWinEventHook(EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZEEND, nullptr, look, 0, 0, flags);
+        SetWinEventHook(EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, nullptr, look, 0, 0, flags);
+    }
+
     HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
     if (!timer) timer = CreateWaitableTimerW(nullptr, FALSE, nullptr);
 
@@ -2411,7 +2494,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int) {
         }
         if (gAttached && (!IsWindow(gParent) || !IsWindow(gWnd))) { gReattach = true; continue; }
         if (gRescene) { gRescene = false; if (gWanted != NONE && gAttached) Rebuild(); }
-        UpdateMouseHook();
 
         static double nextReport = now + 60;
         if (now >= nextReport) {
@@ -2424,13 +2506,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int) {
             lastCpu = cpu; gStatFrames = gStatPixels = 0;
             nextReport = now + 60;
         }
-        if (now >= nextCheck) {
+        static double lastCheck = 0;
+        if (now >= nextCheck || (gRecheck && now - lastCheck > 0.1)) {
+            gRecheck = false; lastCheck = now;
             static int tries = 0;
             if (gWanted != NONE && !gAttached && ++tries % 5 == 0) gReattach = true;  // Explorer not ready yet
             bool wasVisible = Visible();
             CheckConditions();
             if (!wasVisible && Visible()) gFullFrames = 2;
             nextCheck = now + 1.0;
+            UpdateMouseHook();
         }
 
         CheckSun();
