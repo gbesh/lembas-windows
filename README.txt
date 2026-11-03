@@ -76,8 +76,10 @@ GOOD TO KNOW
 ----------------------------------------------------------------------
  - Sunrise and sunset come from the main city of your current time zone (the same cities and
    sums as the Lembas phone launcher and watch, so all three change look at the same minute).
-   If you change time zone, Lembas follows. To use your own location instead, run Install
-   Lembas from a terminal with  -Latitude <yours> -Longitude <yours>.
+   If you change time zone, Lembas follows. For your own area instead: Start > Lembas > Set
+   your location (or the tray menu > Your location for the weather) and type your suburb or
+   town; or, with sync on, turn on Weather for where you are in Lembas on the phone and the PC
+   uses the phone's area (rounded to about a kilometre). A place you type wins.
  - The Lembas icon by the clock (bottom right; it may be under the ^ arrow) changes the look,
    the desktop clock (Modern, Classic or off), the moving scene, the weather and the mealtimes,
    Hold the scene still for an hour, Keep today's panel on the desktop, One view across your
@@ -90,8 +92,9 @@ GOOD TO KNOW
  - Seasons: each scene has spring, summer, autumn and winter versions (flipped south of the
    equator), and the wallpaper and desktop change with them.
  - Weather in the scene: rain, snow, fog or heavy cloud over the Shire, the lake and Rivendell
-   (never indoors by the fire). It asks Open-Meteo (free, no account) about your time zone's
-   main city at most once an hour; nothing else is sent. Tray menu > Weather in the scene
+   (never indoors by the fire). It asks Open-Meteo (free, no account) about your location
+   (above) every 20 minutes or so; nothing else is sent. Rain shows only when rain is falling:
+   forecast drizzle on a damp, humid evening shows as cloud. Tray menu > Weather in the scene
    turns it off, and then nothing is fetched.
  - The light of the hour: the Shire warms through the afternoon, Starlit Night deepens toward
    11pm, and a pink and amber glow rises around sunrise and sunset. The moon rises and sets when

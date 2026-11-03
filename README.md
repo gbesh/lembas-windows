@@ -27,7 +27,7 @@ It's a small native program written for Lembas (`desktop/LembasDesktop.cpp`: Dir
 - It draws 24 frames a second on mains power and 8 on battery.
 - It stops completely when windows cover the desktop, a game, film or presentation is full screen on any monitor, the screen is off or locked, or Battery saver is on. Tray → *Hold the scene still for an hour* pauses it on demand. The clock still turns over each minute.
 
-The weather comes from [Open-Meteo](https://open-meteo.com) (free, no account), asked about your time zone's main city at most once an hour; nothing else is sent. Turn it off in the tray menu and nothing is fetched.
+The weather comes from [Open-Meteo](https://open-meteo.com) (free, no account), asked about your time zone's main city every 20 minutes or so, or your own area: Start → Lembas → *Set your location* (type a suburb or town), or your phone's area when *Weather for where you are* is on in Lembas on the phone and sync is on. Rain shows only when rain is actually falling; nothing else is sent. Turn it off in the tray menu and nothing is fetched.
 
 **Lembas as the screensaver** (tray): the look's scene, moving, with its clock, full screen across your monitors.
 
