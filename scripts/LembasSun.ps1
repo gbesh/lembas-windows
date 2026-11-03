@@ -88,7 +88,7 @@ $zoneCities = @{
     'SA Pacific Standard Time' = @(4.71, -74.07); 'Hawaiian Standard Time' = @(21.31, -157.86)
     'Alaskan Standard Time' = @(61.22, -149.90)
 }
-if (-not ($config.PSObject.Properties['locationSource'] -and $config.locationSource -eq 'manual')) {
+if (-not ($config.PSObject.Properties['locationSource'] -and $config.locationSource -in @('manual', 'phone'))) {   # a place you set, or your phone's area, wins
     $c = $zoneCities[[TimeZoneInfo]::Local.Id]
     if (-not $c) { $c = @(0, [TimeZoneInfo]::Local.GetUtcOffset((Get-Date).Date.AddHours(12)).TotalMinutes / 4) }
     if ([double]$config.latitude -ne $c[0] -or [double]$config.longitude -ne $c[1]) {
@@ -151,13 +151,17 @@ if (-not ($config.PSObject.Properties['livingDesktop'] -and -not $config.livingD
 function Update-Weather {
     $file = Join-Path $Dest 'weather.json'
     if ($config.PSObject.Properties['weather'] -and -not $config.weather) { Remove-Item $file -ErrorAction SilentlyContinue; return }
-    if ((Test-Path $file) -and ((Get-Date) - (Get-Item $file).LastWriteTime).TotalMinutes -lt 55) { return }
+    if ((Test-Path $file) -and ((Get-Date) - (Get-Item $file).LastWriteTime).TotalMinutes -lt 18) { return }
     try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         $lat = ([double]$config.latitude).ToString([Globalization.CultureInfo]::InvariantCulture)
         $lon = ([double]$config.longitude).ToString([Globalization.CultureInfo]::InvariantCulture)
-        $w = Invoke-RestMethod "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=weather_code,wind_speed_10m" -TimeoutSec 15
+        $w = Invoke-RestMethod "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=weather_code,precipitation,wind_speed_10m" -TimeoutSec 15
         $code = [int]$w.current.weather_code
+        $rain = if ($null -ne $w.current.precipitation) { [double]$w.current.precipitation } else { 1.0 }
+        # rain only when rain is falling: forecast light drizzle with nothing in the gauge (a damp,
+        # humid evening) shows as cloud
+        if ((($code -in 51, 53, 56) -and $rain -lt 0.2) -or ((($code -ge 51 -and $code -le 67) -or ($code -ge 80 -and $code -le 82)) -and $rain -le 0)) { $code = 3 }
         # WMO codes -> 0 clear, 1 cloudy, 2 fog, 3 rain, 4 snow, 5 storm
         $wx = if ($code -le 1) { 0 } elseif ($code -le 3) { 1 } elseif ($code -le 48) { 2 } elseif ($code -le 67 -or ($code -ge 80 -and $code -le 82)) { 3 } `
               elseif ($code -le 77 -or $code -eq 85 -or $code -eq 86) { 4 } else { 5 }

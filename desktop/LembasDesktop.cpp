@@ -1868,7 +1868,7 @@ static void RunScript(const wchar_t* script, const std::wstring& args, bool visi
 enum { IDM_ADAPTIVE = 100, IDM_SHIRE, IDM_REDBOOK, IDM_STARLIT, IDM_ELVEN,
        IDM_MODERN = 200, IDM_CLASSIC, IDM_NOCLOCK, IDM_SCENE, IDM_MEALS, IDM_WEATHER,
        IDM_SPAN, IDM_PIN, IDM_PAUSE, IDM_SAVER,
-       IDM_PREVIEW = 300, IDM_UPDATE, IDM_UNINSTALL, IDM_SYNC };
+       IDM_PREVIEW = 300, IDM_UPDATE, IDM_UNINSTALL, IDM_SYNC, IDM_PLACE };
 
 // Lembas as the screensaver (the scene and the clock, full screen): set or cleared in your Windows settings.
 static std::wstring SaverPath() { return LembasDir() + L"\\Living\\Lembas.scr"; }
@@ -1930,6 +1930,7 @@ static void TrayMenu() {
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     bool synced = SyncSignedIn();
     AppendMenuW(m, MF_STRING | check(synced), IDM_SYNC, synced ? L"Sync with your phone (on)" : L"Sync with your phone...");
+    AppendMenuW(m, MF_STRING, IDM_PLACE, L"Your location for the weather...");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, IDM_PREVIEW, L"Preview the four looks");
     AppendMenuW(m, MF_STRING, IDM_UPDATE, L"Check for updates");
@@ -1961,6 +1962,7 @@ static void TrayMenu() {
     case IDM_SAVER: SetSaver(!SaverOn()); break;
     case IDM_PREVIEW: RunScript(L"Preview-Lembas.ps1", L"", true); break;
     case IDM_UPDATE: RunScript(L"Update-Lembas.ps1", L"", true); break;
+    case IDM_PLACE: RunScript(L"Set-Location.ps1", L"", false); break;
     case IDM_UNINSTALL: RunScript(L"Uninstall-Lembas.ps1", L"", true); break;
     case IDM_SYNC:
         if (!SyncSignedIn()) RunScript(L"Lembas-Sync.ps1", L"-SignIn", true);

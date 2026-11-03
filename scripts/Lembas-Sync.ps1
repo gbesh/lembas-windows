@@ -189,6 +189,29 @@ function Sig($s) { "{0}|{1}|{2}|{3}|{4}" -f $s.look, $s.keepUntil, $s.weather, $
 $syncState = if (Test-Path $stateFile) { Get-Content $stateFile -Raw | ConvertFrom-Json } else { [pscustomobject]@{ sig = ''; remoteUpdated = 0 } }
 
 $applyAfter = $false
+# Your phone's area (only when "Weather for where you are" is on there), for this PC's weather and
+# sunrise: unless you've set a place on this PC yourself (Start > Lembas > Set your location)
+function Use-PhoneArea($remote) {
+    if ((Get-Prop $config 'locationSource' '') -eq 'manual') { return }
+    $lat = Get-Prop $remote 'lat' $null; $lon = Get-Prop $remote 'lon' $null
+    $changed = $false
+    if ($null -ne $lat -and $null -ne $lon) {
+        if ((Get-Prop $config 'locationSource' '') -ne 'phone' -or [double]$config.latitude -ne [double]$lat -or [double]$config.longitude -ne [double]$lon) {
+            $config | Add-Member -NotePropertyName latitude -NotePropertyValue ([double]$lat) -Force
+            $config | Add-Member -NotePropertyName longitude -NotePropertyValue ([double]$lon) -Force
+            $config | Add-Member -NotePropertyName locationSource -NotePropertyValue 'phone' -Force
+            $changed = $true; Log "using your phone's area for the weather"
+        }
+    } elseif ((Get-Prop $config 'locationSource' '') -eq 'phone') {
+        $config.PSObject.Properties.Remove('locationSource')   # back to the time zone's main city (Lembas Sun sets it)
+        $changed = $true; Log "your phone stopped sharing its area: back to the time zone's main city"
+    }
+    if ($changed) {
+        $config | ConvertTo-Json -Depth 5 | Set-Content $configFile -Encoding UTF8
+        Remove-Item (Join-Path $Dest 'weather.json') -ErrorAction SilentlyContinue
+        $script:applyAfter = -not $NoApply
+    }
+}
 try {
     $mine = Local-Settings
     $changedHere = (Sig $mine) -ne $syncState.sig
@@ -196,6 +219,7 @@ try {
     $remote = if ($remoteMeta) { Read-Remote $remoteMeta.id } else { $null }
     $remoteUpdated = if ($remote) { [long](Get-Prop $remote 'updated' 0) } else { 0 }
     $changedThere = $remoteUpdated -gt [long]$syncState.remoteUpdated
+    if ($remote) { Use-PhoneArea $remote }
     $now = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 
     if ($remote -and $changedThere -and -not ($changedHere -and $syncState.sig -ne '')) {
@@ -218,6 +242,7 @@ try {
     } elseif ($changedHere -or -not $remote) {
         $out = [ordered]@{ v = 1; updated = $now; by = 'PC' }
         foreach ($k in $mine.Keys) { $out[$k] = $mine[$k] }
+        if ($remote -and $null -ne (Get-Prop $remote 'lat' $null)) { $out['lat'] = $remote.lat; $out['lon'] = $remote.lon }   # the phone's area stays for the phone to change
         Write-Remote ($(if ($remoteMeta) { $remoteMeta.id } else { $null })) $out
         Log ("sent this PC's settings: look {0}" -f $mine.look)
         $syncState = [pscustomobject]@{ sig = (Sig $mine); remoteUpdated = $now }
