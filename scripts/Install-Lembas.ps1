@@ -292,7 +292,7 @@ foreach ($s in @(
         @{ name = 'Lembas - Change look'; script = 'Change-Look.ps1'; icon = 'Icons\pictures.ico' },
         @{ name = 'Lembas - Update'; script = 'Update-Lembas.ps1'; icon = 'Icons\downloads.ico' },
         @{ name = 'Lembas - Sync with your phone'; script = 'Lembas-Sync.ps1'; args = '-SignIn'; icon = 'Icons\network.ico' },
-        @{ name = 'Lembas - Set your location'; script = 'Set-Location.ps1'; icon = 'Icons\network.ico' },
+        @{ name = 'Lembas - Set your location'; script = 'Lembas-Location.ps1'; icon = 'Icons\network.ico' },
         @{ name = 'Lembas - Uninstall'; script = 'Uninstall-Lembas.ps1'; icon = 'Icons\recycle-empty.ico' })) {
     $lnk = $shell.CreateShortcut((Join-Path $menu ($s.name + '.lnk')))
     $lnk.TargetPath = $ps

@@ -1962,7 +1962,7 @@ static void TrayMenu() {
     case IDM_SAVER: SetSaver(!SaverOn()); break;
     case IDM_PREVIEW: RunScript(L"Preview-Lembas.ps1", L"", true); break;
     case IDM_UPDATE: RunScript(L"Update-Lembas.ps1", L"", true); break;
-    case IDM_PLACE: RunScript(L"Set-Location.ps1", L"", false); break;
+    case IDM_PLACE: RunScript(L"Lembas-Location.ps1", L"", false); break;
     case IDM_UNINSTALL: RunScript(L"Uninstall-Lembas.ps1", L"", true); break;
     case IDM_SYNC:
         if (!SyncSignedIn()) RunScript(L"Lembas-Sync.ps1", L"-SignIn", true);
