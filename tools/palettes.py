@@ -1,4 +1,4 @@
-"""The four Lembas looks for Windows.
+"""The six Lembas looks for Windows.
 
 The Windhawk styles are written once with a light palette (Red Book: parchment and red ink) and a
 dark one (Starlit Night: midnight and gold). Each look is made by swapping colours in that text:
@@ -7,7 +7,7 @@ black-blue and silver. Light mode shows the light colours and dark mode the dark
 only needs its own half.
 """
 
-PHASES = ["shire", "redbook", "starlit", "elven"]
+PHASES = ["shire", "redbook", "starlit", "elven", "lorien", "havens"]
 
 LOOKS = {
     "shire": {
@@ -38,6 +38,26 @@ LOOKS = {
             "141A30": "151C21", "141C3E": "18212A", "1F2A52": "26323C", "D9BC7A": "C9D7DF",
             "B8892F": "7E9DAE", "E2C46F": "D6E3EA", "C9A04C": "9DB8C7", "4A4232": "2E363C",
             "home-dark": "home-elven",
+        },
+    },
+    "lorien": {
+        "name": "Lothlorien", "light": 0, "wallpaper": "Lembas - Lothlorien.jpg",
+        "accent": ["FBEBC4", "F6D892", "EBC064", "D9A43A", "B8862A", "8E6620", "634614", "3A280A"],
+        "swap": {
+            "0B1020": "1A1418", "121628": "211A1E", "0A0E1A": "151014", "0E1430": "241C20",
+            "141A30": "2A2024", "141C3E": "30252A", "1F2A52": "3E3034", "D9BC7A": "F2D27A",
+            "B8892F": "D9A43A", "E2C46F": "F6D892", "C9A04C": "EBC064", "4A4232": "4A3A2A",
+            "home-dark": "home-lorien",
+        },
+    },
+    "havens": {
+        "name": "The Grey Havens", "light": 0, "wallpaper": "Lembas - The Grey Havens.jpg",
+        "accent": ["EEF1F8", "D6DEEC", "B9C6DC", "9AA8C4", "7A8AA8", "5E6C88", "424E66", "283044"],
+        "swap": {
+            "0B1020": "0B101C", "121628": "121A28", "0A0E1A": "090D18", "0E1430": "101828",
+            "141A30": "16203A", "141C3E": "1A2440", "1F2A52": "26324E", "D9BC7A": "C9D4EA",
+            "B8892F": "7A8AA8", "E2C46F": "D6DEEC", "C9A04C": "9AA8C4", "4A4232": "343C4E",
+            "home-dark": "home-havens",
         },
     },
 }

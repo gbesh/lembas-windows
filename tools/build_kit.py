@@ -22,6 +22,8 @@ NAMES = {
     "redbook": "Lembas - Red Book",
     "starlit": "Lembas - Starlit Night",
     "elven": "Lembas - Elven Silver",
+    "lorien": "Lembas - Lothlorien",
+    "havens": "Lembas - The Grey Havens",
 }
 
 
@@ -105,7 +107,8 @@ def home_art(wall_dir, out_dir):
     the day scenes washed toward parchment, the night scenes deepened toward their ink."""
     from PIL import ImageEnhance
     tone = {"shire": ((242, 244, 228), 0.6, 0.75), "redbook": ((246, 236, 212), 0.6, 0.75),
-            "starlit": ((8, 11, 26), 0.3, 1.0), "elven": ((9, 12, 15), 0.3, 1.0)}
+            "starlit": ((8, 11, 26), 0.3, 1.0), "elven": ((9, 12, 15), 0.3, 1.0),
+            "lorien": ((30, 22, 26), 0.3, 1.0), "havens": ((12, 18, 32), 0.3, 1.0)}
     for key, (rgb, amount, colour) in tone.items():
         im = widescreen(wall_dir / f"{NAMES[key]}.jpg")
         im = ImageEnhance.Color(im).enhance(colour)

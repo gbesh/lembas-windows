@@ -121,7 +121,7 @@ if ($Mode -eq 'Install') {
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
         -ExecutionTimeLimit (New-TimeSpan -Minutes 20) -MultipleInstances IgnoreNew
     Register-ScheduledTask -TaskPath $taskPath -TaskName $taskName -Action $action -Trigger $triggers -Principal $principal `
-        -Settings $settings -Description 'Lembas: switches Windows between Shire Morning, Red Book, Starlit Night and Elven Silver with the sun.' -Force | Out-Null
+        -Settings $settings -Description 'Lembas: switches Windows between its six looks (Shire Morning, Red Book, Lothlorien, Starlit Night, Elven Silver, the Grey Havens) with the sun.' -Force | Out-Null
 
     # ---------------------------------------------------------- the sign-in screen
     # Windows shows the lock screen picture (the current Lembas scene) behind the password box;

@@ -342,7 +342,7 @@ Say ""
 if ($ok) {
     Say "  Lembas is installed." 'Yellow'
     Say "  It follows the sun: Shire Morning from sunrise, Red Book from midday, Starlit Night from" 'Gray'
-    Say "  sunset and Elven Silver from 11pm. To see all four now: Start > Lembas > Preview the four looks." 'Gray'
+    Say "  sunset (Lothlorien in autumn), Elven Silver from 11pm and the Grey Havens from 2am. To see them all now: Start > Lembas > Preview the looks." 'Gray'
 } else {
     Say "  Lembas is partly installed (see above)." 'Yellow'
 }

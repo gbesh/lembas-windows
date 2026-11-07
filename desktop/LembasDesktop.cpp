@@ -533,20 +533,57 @@ struct Mist : Element {  // a band of mist drifting along the valley
         gCtx->FillRectangle(Bounds(t), b.Get());
     }
 };
-struct Lamp : Element {  // a lantern among the trees, glowing softly
-    float x, y, dur, off;
-    static ComPtr<ID2D1RadialGradientBrush> glow;
-    Lamp(float x_, float y_, float d, float o) : x(x_), y(y_), dur(d), off(o) { slow = true; rate = 10; }
-    D2D1_RECT_F Bounds(double) override { return Circle(x, y, 26); }
+struct Lamp : Element {  // a lantern among the trees, glowing softly (silver in Rivendell, gold in Lórien)
+    float x, y, dur, off; bool gold;
+    static ComPtr<ID2D1RadialGradientBrush> glow, goldGlow;
+    Lamp(float x_, float y_, float d, float o, bool g = false) : x(x_), y(y_), dur(d), off(o), gold(g) { slow = true; rate = 10; }
+    D2D1_RECT_F Bounds(double) override { return Circle(x, y, gold ? 30.f : 26.f); }
     void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
-        float k = .5f - .5f * std::cos(2 * PI * Phase(t, dur, off)), s = .85f + .3f * k;
+        float k = .5f - .5f * std::cos(2 * PI * Phase(t, dur, off)), s = .85f + .3f * k, r = gold ? 24.f : 22.f;
         gCtx->SetTransform(art);
-        FillGlow(glow.Get(), x, y, 22 * s, 22 * s, .6f + .4f * k);
-        Solid(0xF3E3B4, 1);
+        FillGlow(gold ? goldGlow.Get() : glow.Get(), x, y, r * s, r * s, .6f + .4f * k);
+        Solid(gold ? 0xFFF0C4 : 0xF3E3B4, 1);
         gCtx->FillEllipse(Ellipse(Point2F(x, y), 4.5f, 4.5f), gBrush.Get());
     }
 };
-ComPtr<ID2D1RadialGradientBrush> Lamp::glow;
+ComPtr<ID2D1RadialGradientBrush> Lamp::glow, Lamp::goldGlow;
+struct Leaf : Element {  // a golden leaf drifting down through Lórien, turning as it falls
+    float x, dur, off, ph; uint32_t col;
+    Leaf(float x_, float d, float o, float p, uint32_t c) : x(x_), dur(d), off(o), ph(p), col(c) { smooth = true; }
+    D2D1_POINT_2F At(double t) { float p = Phase(t, dur, off); return Point2F(x + 60 * std::sin(p * 2 * PI * 1.5f + ph), -20 + 1120 * p); }
+    D2D1_RECT_F Bounds(double t) override { auto c = At(t); return Circle(c.x, c.y, 9); }
+    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
+        float p = Phase(t, dur, off); auto c = At(t);
+        gCtx->SetTransform(Matrix3x2F::Rotation(p * 540 + ph * 57, Point2F(0, 0)) * Matrix3x2F::Translation(c.x, c.y) * art);
+        Solid(col, .9f * (p > .85f ? (1 - p) / .15f : 1));
+        gCtx->FillEllipse(Ellipse(Point2F(0, 0), 7, 3.4f), gBrush.Get());
+    }
+};
+struct Ship : Element {  // the white ship in the Grey Havens, rising and falling on the swell
+    ComPtr<ID2D1PathGeometry> hull = Path("M-120,0 C-90,26 80,26 120,0 C124,-10 132,-30 150,-44 C140,-28 136,-14 134,0 Z M150,-44 C158,-50 166,-46 164,-38 C160,-40 156,-40 150,-44 Z");
+    ComPtr<ID2D1PathGeometry> keel = Path("M-120,0 C-90,26 80,26 120,0 L118,8 C80,32 -90,32 -118,8 Z");
+    ComPtr<ID2D1PathGeometry> sailA = Path("M-2,-186 C60,-150 74,-80 64,-18 L-2,-18 Z"), sailB = Path("M-10,-170 C-60,-130 -70,-70 -62,-20 L-10,-20 Z");
+    ComPtr<ID2D1LinearGradientBrush> sail;
+    float x, y;
+    Ship(float x_, float y_) : x(x_), y(y_) {
+        smooth = true;
+        D2D1_GRADIENT_STOP st[2] = { {0, Hex(0xF6F6F2, 1)}, {1, Hex(0xC9CED8, 1)} };
+        ComPtr<ID2D1GradientStopCollection> c;
+        gCtx->CreateGradientStopCollection(st, 2, &c);
+        gCtx->CreateLinearGradientBrush(LinearGradientBrushProperties(Point2F(-70, 0), Point2F(70, 0)), c.Get(), &sail);
+    }
+    D2D1_MATRIX_3X2_F M(double t) { float rock = 1.2f * std::sin(2 * PI * Phase(t, 8, 0)), bob = 3 * std::sin(2 * PI * Phase(t, 8, 2)); return Matrix3x2F::Rotation(rock) * Matrix3x2F::Translation(x, y + bob); }
+    D2D1_RECT_F Bounds(double) override { return RectF(x - 140, y - 200, x + 180, y + 40); }
+    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
+        gCtx->SetTransform(M(t) * art);
+        Solid(0xB9C0CE, 1); gCtx->FillGeometry(keel.Get(), gBrush.Get());
+        Solid(0xF2F2EE, 1); gCtx->FillGeometry(hull.Get(), gBrush.Get());
+        Solid(0xD8DCE4, 1); gCtx->DrawLine(Point2F(-6, -6), Point2F(-6, -190), gBrush.Get(), 5);
+        sail->SetOpacity(1); gCtx->FillGeometry(sailA.Get(), sail.Get());
+        sail->SetOpacity(.9f); gCtx->FillGeometry(sailB.Get(), sail.Get());
+        Solid(0xFFF2D0, 1); gCtx->FillEllipse(Ellipse(Point2F(-112, -8), 5, 5), gBrush.Get());
+    }
+};
 struct Rising : Element {  // a mote of light drifting up through the grove
     float x, y, dur, off;
     Track op{ {0, .2f, .8f, 1}, {0, .8f, .6f, 0}, LINEAR };
@@ -660,9 +697,9 @@ struct Visitor : Element {
 };
 
 // ------------------------------------------------------------------------------------ scenes
-enum SceneId { NONE = -1, SHIRE, REDBOOK, STARLIT, ELVEN };
-static const wchar_t* kSceneKey[] = { L"shire", L"redbook", L"starlit", L"elven" };
-static const wchar_t* kWallName[] = { L"Lembas - Shire Morning.jpg", L"Lembas - Red Book.jpg", L"Lembas - Starlit Night.jpg", L"Lembas - Elven Silver.jpg" };
+enum SceneId { NONE = -1, SHIRE, REDBOOK, STARLIT, ELVEN, LORIEN, HAVENS };
+static const wchar_t* kSceneKey[] = { L"shire", L"redbook", L"starlit", L"elven", L"lorien", L"havens" };
+static const wchar_t* kWallName[] = { L"Lembas - Shire Morning.jpg", L"Lembas - Red Book.jpg", L"Lembas - Starlit Night.jpg", L"Lembas - Elven Silver.jpg", L"Lembas - Lothlorien.jpg", L"Lembas - The Grey Havens.jpg" };
 static const wchar_t* kLayerName[] = { L"back", L"mid", L"front" };
 static const wchar_t* kSeasonName[] = { L"spring", L"summer", L"autumn", L"winter" };
 
@@ -769,6 +806,37 @@ static Scene* BuildScene(SceneId id) {
         }
         s->layers = { 0, 1 };
     }
+    if (id == LORIEN) {
+        Rng r(86);
+        E.push_back(new LayerEl(0));
+        E.push_back(new LayerEl(1));
+        const float lamps[9][2] = { {0, 515}, {250, 515}, {1440, 455}, {1730, 455}, {1700, 695}, {2150, 555}, {860, 640}, {1000, 700}, {1180, 620} };
+        for (int i = 0; i < 9; i++) E.push_back(new Lamp(lamps[i][0], lamps[i][1], 3.f + i % 3, i * .9f, true));
+        int sn = SeasonNow();
+        uint32_t lc[3] = { 0xE9B23A, 0xF6D06A, 0xC98A2A };
+        if (sn == 0) { lc[0] = 0xE8C45A; lc[1] = 0xF2D98A; lc[2] = 0xC9A23A; } else if (sn == 1) { lc[0] = 0xB9C46A; lc[1] = 0xD9D08A; lc[2] = 0x8FA64E; }
+        for (int i = 0; i < 16; i++) E.push_back(new Leaf(frand10(ART_L + r() * (ART_R - ART_L)), frand10(9 + r() * 6), frand10(r() * 12), frand10(r() * 6.28), lc[i % 3]));
+        E.push_back(new LayerEl(2));
+        s->layers = { 0, 1, 2 };
+    } else if (id == HAVENS) {
+        Rng r(1956);
+        E.push_back(new LayerEl(0));
+        for (int i = 0; i < 40; i++) {
+            auto* t = new Twinkle();
+            t->x = frand10(ART_L + r() * (ART_R - ART_L)); t->y = frand10(r() * 560); t->r = frand10(1.3 + r() * 1.1);
+            t->dur = frand10(2 + r() * 3.5); t->off = frand10(r() * 5);
+            E.push_back(t);
+        }
+        E.push_back(new Shooting());
+        E.push_back(new Moon(1480, 210, 46));
+        const float g[5][3] = { {-70, 14, 140}, {-50, 44, 100}, {-36, 80, 72}, {-24, 124, 48}, {-14, 176, 30} };
+        for (int i = 0; i < 5; i++) E.push_back(new Glint(1480 + g[i][0], 760 + g[i][1], g[i][2], 3.2f + i * .5f, i * .7f, 4, 0xF2F4FA));
+        E.push_back(new LayerEl(1));
+        E.push_back(new Glow(2010, 650 - 197 * .9f, 54, { {0, Hex(0xFFF2D0, .7f)}, {1, Hex(0xFFF2D0, 0)} }, 4.5f, 0, .9f, 1.1f, .7f, 1));
+        E.push_back(new Ship(1180, 860));
+        E.push_back(new LayerEl(2));
+        s->layers = { 0, 1, 2 };
+    }
     AddWeather(E, id);
     if (id == SHIRE) E.push_back(new Visitor(0));
     if (id == STARLIT) E.push_back(new Visitor(1));
@@ -780,6 +848,7 @@ static Scene* BuildScene(SceneId id) {
 static void InitShared() {
     gFactory->CreateStrokeStyle(StrokeStyleProperties(D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_LINE_JOIN_ROUND), nullptr, 0, &Glint::gRound);
     Lamp::glow = Radial({ {0, Hex(0xF3E3B4, .45f)}, {1, Hex(0xF3E3B4, 0)} });
+    Lamp::goldGlow = Radial({ {0, Hex(0xFFE7A8, .6f)}, {1, Hex(0xFFE7A8, 0)} });
     Moon::glow = Radial({ {0, Hex(0xFFF7E0, .55f)}, {1, Hex(0xFFF7E0, 0)} });
     // cloud = one shape (so overlapping puffs don't double up their transparency)
     ComPtr<ID2D1RoundedRectangleGeometry> rr;
@@ -794,7 +863,7 @@ static void InitShared() {
     Cloud::shape = grp;
 }
 static void ReleaseShared() {
-    Glint::gRound.Reset(); Lamp::glow.Reset(); Cloud::shape.Reset(); Moon::glow.Reset();
+    Glint::gRound.Reset(); Lamp::glow.Reset(); Lamp::goldGlow.Reset(); Cloud::shape.Reset(); Moon::glow.Reset();
 }
 
 // ------------------------------------------------------------------------------------ settings
@@ -836,7 +905,7 @@ static void LoadSettings() {
     if (JsonValue(j, L"longitude", v)) gSet.lon = _wtof(v.c_str());
     gSet.adaptive = !JsonValue(j, L"look", v) || v.find(L"adaptive") != std::wstring::npos;
     gSet.look = L"adaptive";
-    if (JsonValue(j, L"look", v)) for (auto* k : { L"shire", L"redbook", L"starlit", L"elven" }) if (v.find(k) != std::wstring::npos) gSet.look = k;
+    if (JsonValue(j, L"look", v)) for (auto* k : { L"shire", L"redbook", L"starlit", L"elven", L"lorien", L"havens" }) if (v.find(k) != std::wstring::npos) gSet.look = k;
     // the clock in the watch face's type (stacked heavy hours and light minutes), unless set to classic
     gSet.modern = !(JsonValue(j, L"desktopClockStyle", v) && v.find(L"classic") != std::wstring::npos);
     gSet.clock = !(JsonValue(j, L"desktopClock", v) && v == L"false");
@@ -853,7 +922,7 @@ static SceneId SceneFromWallpaper() {
     wchar_t wall[MAX_PATH * 2] = {};
     SystemParametersInfoW(SPI_GETDESKWALLPAPER, MAX_PATH * 2, wall, 0);
     std::wstring w = wall;
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < (int)(sizeof kWallName / sizeof *kWallName); i++) {
         std::wstring n = kWallName[i];
         if (w.size() >= n.size() && _wcsicmp(w.c_str() + w.size() - n.size(), n.c_str()) == 0) return (SceneId)i;
     }
@@ -932,8 +1001,9 @@ static SceneId SunScene(const SYSTEMTIME& now) {
     SunDay d = SunToday(now, gSet.lat, gSet.lon);
     int m = now.wHour * 60 + now.wMinute;
     if (m >= d.rise && m < d.evening) return SHIRE;
-    if (m >= d.evening && m < d.set) return REDBOOK;
-    if (m >= 23 * 60 || m < 4 * 60) return ELVEN;
+    if (m >= d.evening && m < d.set) return SeasonNow() == 2 ? LORIEN : REDBOOK;   // autumn: Lothlórien
+    if (m >= 23 * 60 || m < 2 * 60) return ELVEN;
+    if (m < d.rise) return HAVENS;
     return STARLIT;
 }
 // The weather Lembas Sun saved (weather.json: {"wx": 0..5, "at": unix seconds}); clear if it's off,
@@ -1234,10 +1304,10 @@ static void BuildClock(SceneId sc) {
         // The corner clock, as on the phone and the watch: the day and the Quenya hour, then the time
         // (heavy hours, light minutes), the mealtime, and the Shire and everyday dates. Top left, out
         // of the picture's way.
-        static const uint32_t inkC[] = { 0x27452A, 0x2B1E12, 0xF4ECD8, 0xE6ECEE };
-        static const uint32_t accC[] = { 0x3E6A3A, 0x9A2A1C, 0xE2C687, 0xB9C6CA };
-        static const uint32_t softC[] = { 0x55703F, 0x6A5236, 0x9C927B, 0x7D898D };
-        int k = sc == SHIRE ? 0 : sc == REDBOOK ? 1 : sc == STARLIT ? 2 : 3;
+        static const uint32_t inkC[] = { 0x27452A, 0x2B1E12, 0xF4ECD8, 0xE6ECEE, 0xFFF6E0, 0xF2F4FA };
+        static const uint32_t accC[] = { 0x3E6A3A, 0x9A2A1C, 0xE2C687, 0xB9C6CA, 0xF6D27A, 0xC9D4EA };
+        static const uint32_t softC[] = { 0x55703F, 0x6A5236, 0x9C927B, 0x7D898D, 0xE8C8A0, 0x9AA8C0 };
+        int k = sc < 0 ? 2 : (int)sc;
         int hh = h24 ? h : ((h % 12) ? h % 12 : 12);
         wchar_t hb[8], mb[8];
         std::swprintf(hb, 8, h24 ? L"%02d" : L"%d", hh);
@@ -1254,7 +1324,7 @@ static void BuildClock(SceneId sc) {
         dt.text = shireTxt + L" · " + greg;
         left = true; leftX = 7.8f;
         top = 13.9f;
-        shadow = sc == STARLIT || sc == ELVEN;
+        shadow = sc == STARLIT || sc == ELVEN || sc == LORIEN || sc == HAVENS;
         time = L"";   // no am/pm suffix
         if (me.text.empty()) L.erase(L.begin() + 2);
     } else if (sc == REDBOOK) {
@@ -1288,6 +1358,16 @@ static void BuildClock(SceneId sc) {
         left = true; top = 13;
         lab.text = Upper(wd + L" · " + q); shi.text = shireTxt;
         if (!h24) { ampm = h < 12 ? L"am" : L"pm"; tim.text = time + ampm; }
+    } else if (sc == LORIEN) {
+        for (auto& l : L) l.color = 0xFFF6E0;
+        lab.color = shi.color = 0xF6D27A; dat.color = 0xE8C8A0; mea.color = 0xF6D27A;
+        shadow = true;
+        lab.text = Upper(q + L" · " + en); shi.text = wd + L", " + shireTxt;
+    } else if (sc == HAVENS) {
+        for (auto& l : L) l.color = 0xF2F4FA;
+        lab.color = shi.color = 0xC9D4EA; dat.color = 0x9AA8C0; mea.color = 0xC9D4EA;
+        shadow = true;
+        lab.text = Upper(q + L" · " + en); shi.text = wd + L", " + shireTxt;
     } else {  // Starlit Night
         for (auto& l : L) l.color = 0xF3EBD6;
         lab.color = shi.color = 0xD9BC7A; dat.color = 0xB9B19C;
@@ -1842,7 +1922,7 @@ static void RunScript(const wchar_t* script, const std::wstring& args, bool visi
     ShellExecuteW(nullptr, L"open", exe.c_str(), a.c_str(), nullptr, visible ? SW_SHOWNORMAL : SW_HIDE);
 }
 
-enum { IDM_ADAPTIVE = 100, IDM_SHIRE, IDM_REDBOOK, IDM_STARLIT, IDM_ELVEN,
+enum { IDM_ADAPTIVE = 100, IDM_SHIRE, IDM_REDBOOK, IDM_STARLIT, IDM_ELVEN, IDM_LORIEN, IDM_HAVENS,
        IDM_MODERN = 200, IDM_CLASSIC, IDM_NOCLOCK, IDM_SCENE, IDM_MEALS, IDM_WEATHER,
        IDM_SPAN, IDM_PIN, IDM_PAUSE, IDM_SAVER,
        IDM_PREVIEW = 300, IDM_UPDATE, IDM_UNINSTALL, IDM_SYNC, IDM_PLACE };
@@ -1892,6 +1972,8 @@ static void TrayMenu() {
     AppendMenuW(m, MF_STRING | check(gSet.look == L"redbook"), IDM_REDBOOK, L"Red Book");
     AppendMenuW(m, MF_STRING | check(gSet.look == L"starlit"), IDM_STARLIT, L"Starlit Night");
     AppendMenuW(m, MF_STRING | check(gSet.look == L"elven"), IDM_ELVEN, L"Elven Silver");
+    AppendMenuW(m, MF_STRING | check(gSet.look == L"lorien"), IDM_LORIEN, L"Lothl\u00F3rien");
+    AppendMenuW(m, MF_STRING | check(gSet.look == L"havens"), IDM_HAVENS, L"The Grey Havens");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(clock, MF_STRING | check(gSet.clock && gSet.modern), IDM_MODERN, L"Modern");
     AppendMenuW(clock, MF_STRING | check(gSet.clock && !gSet.modern), IDM_CLASSIC, L"Classic");
@@ -1917,9 +1999,9 @@ static void TrayMenu() {
     int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, pt.x, pt.y, 0, gMsgWnd, nullptr);
     DestroyMenu(m);   // also destroys the clock submenu
     PostMessageW(gMsgWnd, WM_NULL, 0, 0);
-    static const wchar_t* looks[] = { L"adaptive", L"shire", L"redbook", L"starlit", L"elven" };
+    static const wchar_t* looks[] = { L"adaptive", L"shire", L"redbook", L"starlit", L"elven", L"lorien", L"havens" };
     switch (cmd) {
-    case IDM_ADAPTIVE: case IDM_SHIRE: case IDM_REDBOOK: case IDM_STARLIT: case IDM_ELVEN:
+    case IDM_ADAPTIVE: case IDM_SHIRE: case IDM_REDBOOK: case IDM_STARLIT: case IDM_ELVEN: case IDM_LORIEN: case IDM_HAVENS:
         gSet.look = looks[cmd - IDM_ADAPTIVE];
         RunScript(L"Change-Look.ps1", std::wstring(L"-Look ") + looks[cmd - IDM_ADAPTIVE], false);
         break;
@@ -2021,12 +2103,13 @@ static SYSTEMTIME AddDays(const SYSTEMTIME& st, int days) {
     SYSTEMTIME o; FileTimeToSystemTime(&ft, &o);
     return o;
 }
-static const wchar_t* kLookTitle[] = { L"Shire Morning", L"the Red Book", L"Starlit Night", L"Elven Silver" };
+static const wchar_t* kLookTitle[] = { L"Shire Morning", L"the Red Book", L"Starlit Night", L"Elven Silver", L"Lothl\u00F3rien", L"the Grey Havens" };
 
 static void PanelContent(SceneId sc) {
-    static const uint32_t cols[4][4] = {
+    static const uint32_t cols[6][4] = {
         { 0xFBF4E3, 0x27452A, 0x3E6A3A, 0x6A7D4E }, { 0xF6ECD2, 0x2B1E12, 0x9A2A1C, 0x6A5236 },
-        { 0x101633, 0xF4ECD8, 0xE2C687, 0x9C927B }, { 0x0E1418, 0xE6ECEE, 0xB9C6CA, 0x7D898D } };
+        { 0x101633, 0xF4ECD8, 0xE2C687, 0x9C927B }, { 0x0E1418, 0xE6ECEE, 0xB9C6CA, 0x7D898D },
+        { 0x231C26, 0xFFF6E0, 0xF6D27A, 0xB89F80 }, { 0x0E1424, 0xF2F4FA, 0xC9D4EA, 0x9AA8C0 } };
     int k = sc == NONE ? 1 : (int)sc;
     for (int i = 0; i < 4; i++) gPanelCol[i] = cols[k][i];
     std::wstring fraunces = Family({ L"Fraunces", L"Fraunces Light" }), alegreya = Family({ L"Alegreya Sans Medium", L"Alegreya Sans" });
@@ -2047,7 +2130,7 @@ static void PanelContent(SceneId sc) {
     add(L"Sunrise " + HourMinute(d.rise) + L"  ·  Sunset " + HourMinute(d.set), L"", alegreya, 14, 1, 6);
     if (gSet.adaptive && gForced == NONE) {
         int m = st.wHour * 60 + st.wMinute;
-        struct B { int at; SceneId to; } bs[] = { { d.rise, SHIRE }, { d.evening, REDBOOK }, { d.set, STARLIT }, { 23 * 60, ELVEN }, { 4 * 60, STARLIT } };
+        struct B { int at; SceneId to; } bs[] = { { d.rise, SHIRE }, { d.evening, SeasonNow() == 2 ? LORIEN : REDBOOK }, { d.set, STARLIT }, { 23 * 60, ELVEN }, { 2 * 60, HAVENS } };
         int best = -1, bestDelta = 99999;
         for (int i = 0; i < 5; i++) { int dl = (bs[i].at - m + 1440) % 1440; if (dl == 0) dl = 1440; if (dl < bestDelta) { bestDelta = dl; best = i; } }
         std::wstring now = kLookTitle[(int)SunScene(st)];
@@ -2156,7 +2239,7 @@ static void ShowPanel(POINT at) {
     if (!gPanel) return;
     DWORD round = 2;  // DWMWCP_ROUND (Windows 11)
     DwmSetWindowAttribute(gPanel, 33, &round, sizeof round);
-    BOOL dark = gWanted == STARLIT || gWanted == ELVEN;
+    BOOL dark = gWanted == STARLIT || gWanted == ELVEN || gWanted == LORIEN || gWanted == HAVENS;
     DwmSetWindowAttribute(gPanel, 20, &dark, sizeof dark);  // DWMWA_USE_IMMERSIVE_DARK_MODE
     ShowWindow(gPanel, SW_SHOW);
     SetForegroundWindow(gPanel);
@@ -2304,7 +2387,7 @@ static int Snapshot(const std::wstring& dir, double t, int W, int H) {
     gCanvasW = W; gCanvasH = H;
     ComPtr<ID2D1Bitmap1> target;
     gCtx->CreateBitmap(SizeU(W, H), nullptr, 0, BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET, PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)), &target);
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 6; i++) {
         delete gScene;
         gScene = BuildScene((SceneId)i);
         LoadLayers();
@@ -2384,7 +2467,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int) {
         int W = argc > 4 ? _wtoi(argv[4]) : 1920, H = argc > 5 ? _wtoi(argv[5]) : 1200;
         return Snapshot(dir, t, W, H);
     }
-    for (int i = 0; i < 4; i++) if (cmd && wcsstr(cmd, (std::wstring(L"--look ") + kSceneKey[i]).c_str())) gForced = (SceneId)i;
+    for (int i = 0; i < 6; i++) if (cmd && wcsstr(cmd, (std::wstring(L"--look ") + kSceneKey[i]).c_str())) gForced = (SceneId)i;
     Log(L"Lembas Desktop starting (%s), pid %lu", gDir.c_str(), GetCurrentProcessId());
     SetUnhandledExceptionFilter(OnCrash);
 

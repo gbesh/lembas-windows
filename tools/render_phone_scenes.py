@@ -16,7 +16,8 @@ from playwright.async_api import async_playwright
 
 SCENE = Path(__file__).resolve().parents[1] / "scenes" / "index.html"
 SEASONS = ["spring", "summer", "autumn", "winter"]
-LAYERS = {"shire": ["back", "mid", "front"], "redbook": ["back"], "starlit": ["back", "front"], "elven": ["back", "mid"]}
+LAYERS = {"shire": ["back", "mid", "front"], "redbook": ["back"], "starlit": ["back", "front"], "elven": ["back", "mid"],
+          "lorien": ["back", "mid", "front"], "havens": ["back", "mid", "front"]}
 
 
 def save(png: bytes, out: Path, opaque: bool):

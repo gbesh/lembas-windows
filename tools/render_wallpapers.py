@@ -23,10 +23,13 @@ NAMES = {
     "redbook": "Lembas - Red Book",
     "starlit": "Lembas - Starlit Night",
     "elven": "Lembas - Elven Silver",
+    "lorien": "Lembas - Lothlorien",
+    "havens": "Lembas - The Grey Havens",
 }
 SEASONS = ["spring", "summer", "autumn", "winter"]
 # Which still layers each scene has (the app draws the moving parts in between)
-LAYERS = {"shire": ["back", "mid", "front"], "redbook": ["back"], "starlit": ["back", "front"], "elven": ["back", "mid"]}
+LAYERS = {"shire": ["back", "mid", "front"], "redbook": ["back"], "starlit": ["back", "front"], "elven": ["back", "mid"],
+          "lorien": ["back", "mid", "front"], "havens": ["back", "mid", "front"]}
 
 
 def save_layer(png: Path, out: Path):

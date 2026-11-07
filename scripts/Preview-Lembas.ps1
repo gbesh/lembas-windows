@@ -27,7 +27,7 @@ Write-Host "  LEMBAS - a day in four looks" -ForegroundColor Yellow
 Write-Host "  Open Start, File Explorer or the notification centre while it runs." -ForegroundColor DarkGray
 Write-Host ""
 try {
-    foreach ($k in 'shire', 'redbook', 'starlit', 'elven') {
+    foreach ($k in 'shire', 'redbook', 'lorien', 'starlit', 'elven', 'havens') {
         Write-Host ("  {0}" -f $looks.$k.name) -ForegroundColor $(if ($looks.$k.light) { 'DarkYellow' } else { 'Cyan' })
         Show-Look $k
         Start-Sleep -Seconds $Seconds

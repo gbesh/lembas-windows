@@ -7,11 +7,13 @@
 
     Shire Morning   sunrise -> late aft. light   sage and green ink
     Red Book        late aft.-> sunset    light   parchment and red ink
-    Starlit Night   sunset  -> 11pm      dark    midnight and gold   (and 4am -> sunrise)
-    Elven Silver    11pm    -> 4am       dark    black-blue and silver
+    Lothlorien      (autumn: late aft. -> sunset instead of the Red Book)   dark   dusk and mallorn gold
+    Starlit Night   sunset  -> 11pm      dark    midnight and gold
+    Elven Silver    11pm    -> 2am       dark    black-blue and silver
+    The Grey Havens 2am     -> sunrise   dark    the grey sea before dawn
 #>
 param(
-    [ValidateSet('', 'shire', 'redbook', 'starlit', 'elven')][string]$Look = '',
+    [ValidateSet('', 'shire', 'redbook', 'starlit', 'elven', 'lorien', 'havens')][string]$Look = '',
     [switch]$Force,
     [switch]$NoWindhawk,
     [switch]$SkipSync
@@ -101,9 +103,13 @@ if (-not $phase) {
     $now = Get-Date
     $sun = Get-SunTimes $now ([double]$config.latitude) ([double]$config.longitude)
     $m = $now.Hour * 60 + $now.Minute
+    # autumn, by the month and hemisphere (the same rule as the phone and the watch)
+    $mo = $now.Month
+    $autumn = if ([double]$config.latitude -lt 0) { $mo -ge 3 -and $mo -le 5 } else { $mo -ge 9 -and $mo -le 11 }
     $phase = if ($m -ge $sun.rise -and $m -lt $sun.evening) { 'shire' }
-        elseif ($m -ge $sun.evening -and $m -lt $sun.set) { 'redbook' }
-        elseif ($m -ge 23 * 60 -or $m -lt 4 * 60) { 'elven' }
+        elseif ($m -ge $sun.evening -and $m -lt $sun.set) { if ($autumn) { 'lorien' } else { 'redbook' } }
+        elseif ($m -ge 23 * 60 -or $m -lt 2 * 60) { 'elven' }
+        elseif ($m -lt $sun.rise) { 'havens' }
         else { 'starlit' }
 }
 # ------------------------------------------------------------------ once a day: quietly update Lembas itself

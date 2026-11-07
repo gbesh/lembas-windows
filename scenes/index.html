@@ -9,7 +9,7 @@
 /* Lembas — the four Middle-earth scenes, shared by every Lembas device.
    One drawing, two shapes: fmt=pc (a 2880×1080 panorama; a 16:9 screen shows the middle
    1920, an ultrawide shows more) and fmt=phone (1080×2400, for a tall screen).
-   ?theme=shire|redbook|starlit|elven   ?season=spring|summer|autumn|winter (default: today's)
+   ?theme=shire|redbook|starlit|elven|lorien|havens   ?season=spring|summer|autumn|winter (default: today's)
    ?south=0|1 (hemisphere, default 1)   ?fmt=pc|phone   ?clock=1 (a preview clock)
    ?still=1 (no motion)   ?layer=back|mid|front|moving (the still layers the apps animate between)
    Open it in a browser, or use it as a Lively Wallpaper: it animates on its own. */
@@ -148,6 +148,11 @@ const P = PC ? {
   glints: [[140, 775, 70], [520, 792, 40], [1010, 771, 90], [1560, 752, 50], [-300, 768, 60], [2100, 770, 70]],
   fire: [1210, 820, 1], compass: [1760, 900, 1], moon: [1480, 230, 54], lakeY: 790, glint: [1480, 812],
   cabin: [600, 905], star: [1160, 150, 1], clock: [150, 150],
+  glowL: [1500, 780], crownsL: [[-360, 200, 380, 150], [1720, 120, 420, 150], [2300, 170, 380, 140], [1180, 40, 300, 80]],   // clear of the clock (top left)
+  giants: [[120, 940, 60, [[520, 2.6]]], [1580, 930, 70, [[460, 2.4], [700, 1.9]]], [2260, 950, 54, [[560, 2.4]]], [-380, 950, 50, []]],
+  lampsL: [[120 - 120, 515], [120 + 130, 515], [1580 - 140, 455], [1580 + 150, 455], [1580 + 120, 695], [2260 - 110, 555], [860, 640], [1000, 700], [1180, 620]],
+  nearGiant: [1990, 1060, 110],
+  moonH: [1480, 210, 46], seaY: 760, tower: [2010, 650, .9], quayY: 940, quayLamp: [180, 940], ship: [1180, 860, 1],
 } : {
   // the phone: the clock and the sun's arc sit in the top 1000; the land rises to meet them
   sun: [820, 1060, 1], tree: [220, 1330, 1.25], farTree: [880, 1176, .5], nearTree: [40, 2010, 2.1], door: [740, 1850, 1.6], chimney: [893, 1706], river: 1500,
@@ -155,6 +160,11 @@ const P = PC ? {
   glints: [[120, 1512, 60], [560, 1530, 40], [900, 1478, 50]],
   fire: [560, 1700, 1.4], compass: [900, 1900, 1], moon: [820, 960, 64], lakeY: 1760, glint: [820, 1786],
   cabin: [430, 1960], star: [540, 140, 1.2], clock: [540, 300],
+  glowL: [700, 1700], crownsL: [[-60, 1040, 340, 140], [1140, 1100, 360, 150], [-40, 1500, 280, 110], [1120, 1520, 300, 120]],
+  giants: [[90, 2010, 60, [[1240, 2.6], [1660, 2.1]]], [990, 2000, 66, [[1320, 2.5], [1720, 2]]]],
+  lampsL: [[90 - 120, 1235], [90 + 140, 1235], [990 - 150, 1315], [990 + 140, 1315], [90 + 110, 1655], [990 - 120, 1715], [420, 1500], [560, 1440], [700, 1560]],
+  nearGiant: [1110, 2420, 120],
+  moonH: [760, 1060, 58], seaY: 1640, tower: [980, 1440, 1.3], quayY: 2040, quayLamp: [90, 2040], ship: [560, 1830, 1.35],
 };
 
 // ================================================================ Shire Morning
@@ -486,7 +496,107 @@ function elven() {
   return { ink: ['#E6ECEE', '#B9C6CA', '#7D898D'], shadow: true };
 }
 
-const out = { shire, redbook, starlit, elven }[THEME]();
+// ================================================================ Lothlórien (golden autumn evenings)
+function lorien() {
+  const S = SEASON;
+  const leaf = { spring: ['#E8C45A', '#F2D98A', '#C9A23A'], summer: ['#B9C46A', '#D9D08A', '#8FA64E'], autumn: ['#E9B23A', '#F6D06A', '#C98A2A'], winter: ['#E2B85A', '#F0D49A', '#B8913A'] }[S];
+  def(`${grainDef}<linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1F2C47"/><stop offset="${PC ? .45 : .4}" stop-color="#6A5A6A"/><stop offset="${PC ? .72 : .62}" stop-color="#D99A58"/><stop offset="1" stop-color="#F3C67A"/></linearGradient>
+  <radialGradient id="lampglow"><stop offset="0" stop-color="#FFE7A8" stop-opacity=".6"/><stop offset="1" stop-color="#FFE7A8" stop-opacity="0"/></radialGradient>`);
+  add('back', `<rect x="${X0}" y="0" width="${X1 - X0}" height="${H}" fill="url(#sky)"/>`);
+  const [gx, gy] = P.glowL;
+  add('back', `<rect x="${X0}" y="0" width="${X1 - X0}" height="${H}" fill="${lightFrom(gx, gy, PC ? 900 : 1000, '#FFE2A0', .6)}"/>`);
+  const r = rng(71);
+  for (let i = 0; i < (PC ? 120 : 90); i++) add('back', `<circle cx="${f1(X0 + r() * (X1 - X0))}" cy="${f1(Math.pow(r(), 1.6) * (PC ? 380 : 900))}" r="${f1(.5 + r() * .9)}" fill="#FFF4DE" opacity="${f1(.2 + r() * .45)}"/>`);
+  // far woods: rows of distant mallorns, pale in the golden haze
+  const far = (base, n, h0, c, o, layer) => { let s = ''; const rr = rng(base);
+    for (let i = 0; i < n; i++) { const x = X0 + (i + rr() * .6) / n * (X1 - X0), h = h0 * (.8 + rr() * .4), w = h * .022;
+      s += `<path d="M${f1(x - w)},${base} L${f1(x - w * .5)},${f1(base - h * .7)} L${f1(x + w * .5)},${f1(base - h * .7)} L${f1(x + w)},${base}Z" fill="${c[0]}"/>`;
+      // a hazy golden crown: soft lobes, paler on top
+      for (let k = 0; k < 4; k++) { const fx = k / 3 * 2 - 1; s += `<ellipse cx="${f1(x + fx * h * .11)}" cy="${f1(base - h * (.78 + (1 - Math.abs(fx)) * .1))}" rx="${f1(h * .1)}" ry="${f1(h * .07)}" fill="${c[1]}"/>`; } }
+    add(layer, `<g opacity="${o}">${s}</g>`); };
+  const farA = [mix('#C9B6A0', '#6A5A6A', .3), mix(leaf[0], '#F3C67A', .45)], farB = [mix('#A8A4A0', '#4A3A40', .25), mix(leaf[0], '#C98A4A', .3)];
+  if (PC) { far(760, 22, 300, farA, .5, 'back'); haze('back', 600, 180, '#F3C67A', .75); far(860, 14, 420, farB, .7, 'back'); haze('back', 720, 160, '#E9B06A', .55); }
+  else { far(1560, 12, 520, farA, .5, 'back'); haze('back', 1300, 280, '#F3C67A', .75); far(1700, 8, 700, farB, .7, 'back'); haze('back', 1500, 220, '#E9B06A', .55); }
+  // the ground: a carpet of fallen gold, and a winding white stair
+  const g0 = PC ? 900 : 1960;
+  land('mid', hill(g0, PC ? 18 : 26, 83), mix(leaf[0], '#FFFFFF', .1), mix(leaf[2], '#3A2A18', .45), lightFrom(gx, gy, PC ? 1200 : 1000, '#FFF2C8', .8));
+  { const rl = rng(84); let s = ''; for (let i = 0; i < (PC ? 220 : 120); i++) { const x = X0 + rl() * (X1 - X0), y = g0 + 10 + rl() * (PC ? 170 : 420); s += `<ellipse cx="${f1(x)}" cy="${f1(y)}" rx="${f1(4 + rl() * 4)}" ry="${f1(2 + rl() * 2)}" fill="${leaf[i % 3]}" opacity=".85" transform="rotate(${f1(rl() * 180)} ${f1(x)} ${f1(y)})"/>`; } add('mid', s); }
+  if (S === 'spring') { const rf = rng(85); let s = ''; for (let i = 0; i < (PC ? 60 : 36); i++) { const x = X0 + rf() * (X1 - X0), y = g0 + 20 + rf() * (PC ? 140 : 360), sc = PC ? 1 : 1.3; s += `<path d="M${f1(x)},${f1(y - 5 * sc)} l${f1(1.4 * sc)},${f1(3.6 * sc)} ${f1(3.6 * sc)},${f1(1.4 * sc)} -${f1(3.6 * sc)},${f1(1.4 * sc)} -${f1(1.4 * sc)},${f1(3.6 * sc)} -${f1(1.4 * sc)},-${f1(3.6 * sc)} -${f1(3.6 * sc)},-${f1(1.4 * sc)} ${f1(3.6 * sc)},-${f1(1.4 * sc)}z" fill="${i % 3 ? '#F6D24A' : '#FFFFFF'}"/>`; } add('mid', s); }   // elanor and niphredil
+  // the great mallorns: silver columns rising out of sight, with flets and their lamps
+  const bark = (x) => { const id = 'b' + (gid++); def(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${x - 60}" y1="0" x2="${x + 60}" y2="0"><stop offset="0" stop-color="#9DA9AC"/><stop offset=".35" stop-color="#E9EEEC"/><stop offset="1" stop-color="#7E8A8E"/></linearGradient>`); return `url(#${id})`; };
+  const giant = (x, base, w, layer, flets) => {
+    let s = `<path d="M${f1(x - w * 2.4)},${base + 30} C${f1(x - w * 1.3)},${base} ${f1(x - w)},${f1(base - w * 2)} ${f1(x - w * .9)},${f1(base - w * 4)} L${f1(x - w * .7)},-20 L${f1(x + w * .7)},-20 L${f1(x + w * .9)},${f1(base - w * 4)} C${f1(x + w)},${f1(base - w * 2)} ${f1(x + w * 1.3)},${base} ${f1(x + w * 2.4)},${base + 30}Z" fill="${bark(x)}"/>`;
+    for (let k = 0; k < 4; k++) { const dx = (k - 1.5) * w * .4; s += `<path d="M${f1(x + dx * 1.3)},${base} C${f1(x + dx)},${f1(base - H * .3)} ${f1(x + dx * .9)},${f1(base - H * .6)} ${f1(x + dx * .9)},-20" stroke="#7E8A8E" stroke-width="${f1(w * .05)}" fill="none" opacity=".35"/>`; }
+    for (const [fy, fw] of flets) {   // a flet: a white platform round the trunk, a rail, a lamp
+      s += `<path d="M${f1(x - w * fw)},${fy} L${f1(x + w * fw)},${fy} L${f1(x + w * fw * .9)},${fy + w * .18} L${f1(x - w * fw * .9)},${fy + w * .18}Z" fill="#F2EEE2"/><path d="M${f1(x - w * fw)},${fy} L${f1(x - w * fw * .7)},${fy + w * .5} M${f1(x + w * fw)},${fy} L${f1(x + w * fw * .7)},${fy + w * .5}" stroke="#D8D2C2" stroke-width="${f1(w * .06)}"/><path d="M${f1(x - w * fw)},${f1(fy - w * .22)} L${f1(x + w * fw)},${f1(fy - w * .22)}" stroke="#F2EEE2" stroke-width="${f1(w * .05)}"/>`;
+    }
+    add(layer, s);
+  };
+  // golden crowns hanging in from the edges, clear of the clock
+  const crown = (x, y, rx, ry, layer) => { const id = 'k' + (gid++); def(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="0" y1="${y - ry}" x2="0" y2="${y + ry}"><stop offset="0" stop-color="${mix(leaf[1], '#FFFFFF', .25)}"/><stop offset=".6" stop-color="${leaf[0]}"/><stop offset="1" stop-color="${mix(leaf[2], '#3A2A18', .35)}"/></linearGradient>`);
+    let s = `<ellipse cx="${x}" cy="${y}" rx="${rx}" ry="${ry * .6}"/>`; const rc = rng(Math.round(x + y));
+    for (let k = 0; k < 7; k++) { const fx = k / 6 * 2 - 1; s += `<ellipse cx="${f1(x + fx * rx * .8)}" cy="${f1(y - ry * (.3 + (1 - Math.abs(fx)) * .4) + (rc() - .5) * ry * .3)}" rx="${f1(rx * (.24 + (1 - Math.abs(fx)) * .1))}" ry="${f1(ry * (.55 + (1 - Math.abs(fx)) * .3))}"/>`; }
+    add(layer, `<g fill="url(#${id})" opacity=".95">${s}</g>`); };
+  for (const [x, y, rx, ry] of P.crownsL) crown(x, y, rx, ry, 'mid');
+  for (const [x, base, w, fl] of P.giants) giant(x, base, w, 'mid', fl);
+  // lamps on the flets and among the boughs (they glow: drawn by the apps)
+  P.lampsL.forEach(([x, y], i) => add('moving', `<circle class="lamp" style="animation-duration:${3 + i % 3}s;animation-delay:-${i * .9}s" cx="${x}" cy="${y}" r="${PC ? 24 : 32}" fill="url(#lampglow)"/><circle cx="${x}" cy="${y}" r="${PC ? 4.5 : 6}" fill="#FFF0C4"/>`));
+  // leaves drifting down (the apps animate them)
+  { const rl = rng(86); for (let i = 0; i < 14; i++) { const x = X0 + rl() * (X1 - X0), y = rl() * H * .7; add('moving', `<ellipse class="fall" style="animation-duration:${f1(9 + rl() * 6)}s;animation-delay:-${f1(rl() * 12)}s" cx="${f1(x)}" cy="${f1(y)}" rx="6" ry="3" fill="${leaf[i % 3]}"/>`); } }
+  // the nearest giant, right at the edge, in the front layer
+  giant(P.nearGiant[0], P.nearGiant[1], P.nearGiant[2], 'front', []);
+  vignette('#1A1208', .3);
+  grain('front', .8);
+  return { ink: ['#FFF6E0', '#F6D27A', '#E8C8A0'], shadow: true };
+}
+
+// ================================================================ The Grey Havens (the small hours)
+function havens() {
+  const S = SEASON;
+  def(`${grainDef}<linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0A0F1E"/><stop offset="${PC ? .55 : .5}" stop-color="#1E2A44"/><stop offset="${PC ? .74 : .66}" stop-color="#5A6A86"/></linearGradient>
+  <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6E7E9A"/><stop offset=".25" stop-color="#3A4866"/><stop offset="1" stop-color="#0E1528"/></linearGradient>
+  <radialGradient id="moonglow"><stop offset="0" stop-color="#F2F4FA" stop-opacity=".5"/><stop offset="1" stop-color="#F2F4FA" stop-opacity="0"/></radialGradient>
+  <radialGradient id="beacon"><stop offset="0" stop-color="#FFF2D0" stop-opacity=".7"/><stop offset="1" stop-color="#FFF2D0" stop-opacity="0"/></radialGradient>
+  <linearGradient id="sail" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#F6F6F2"/><stop offset="1" stop-color="#C9CED8"/></linearGradient>`);
+  add('back', `<rect x="${X0}" y="0" width="${X1 - X0}" height="${H}" fill="url(#sky)"/>`);
+  const [mx, my, mr] = P.moonH;
+  add('back', `<rect x="${X0}" y="0" width="${X1 - X0}" height="${H}" fill="${lightFrom(mx, my, PC ? 1000 : 1100, '#C9D4EA', .35)}"/>`);
+  const r = rng(91), skyH = P.seaY;
+  for (let i = 0; i < (PC ? 520 : 340); i++) add('back', `<circle cx="${f1(X0 + r() * (X1 - X0))}" cy="${f1(Math.pow(r(), 1.3) * skyH)}" r="${f1(.5 + r() * 1.1)}" fill="${r() < .2 ? '#DDE6FF' : '#F2F2EE'}" opacity="${f1(.3 + r() * .6)}"/>`);
+  // the Blue Mountains far across the gulf, and the headland with its white tower
+  const sy = P.seaY;
+  land('back', mountains(sy - 2, PC ? 90 : 140, 92, .5, PC ? [[300, 70, 300], [1700, 60, 320]] : [[300, 90, 300], [820, 70, 260]]), '#3E4C6E', '#26304A');
+  haze('back', sy - (PC ? 60 : 100), PC ? 62 : 102, '#8A9AB8', .45);
+  add('back', `<rect x="${X0}" y="${sy}" width="${X1 - X0}" height="${H - sy + 10}" fill="url(#sea)"/>`);
+  // the moon's road on the water (still lines; the apps add moving glints)
+  { const rr = rng(93); let s = ''; for (let i = 0; i < 40; i++) { const t = rr(), y = sy + 6 + Math.pow(t, 1.4) * (H - sy) * .8, w = 10 + (1 - t) * 50 * (PC ? 1 : 1.2); s += `<rect x="${f1(mx - w / 2 + (rr() - .5) * (40 + t * 160))}" y="${f1(y)}" width="${f1(w)}" height="2" rx="1" opacity="${f1(.25 + (1 - t) * .4)}"/>`; } add('back', `<g fill="#E6ECF8">${s}</g>`); }
+  // the headland and the tower, the quay with its steps
+  const hd = PC ? `M${X1 + 20},${H + 10} L${X1 + 20},${sy - 150} C2200,${sy - 140} 2000,${sy - 120} 1860,${sy - 60} C1780,${sy - 30} 1740,${sy} 1700,${sy + 30} L1700,${H + 10}Z`
+               : `M1100,${H + 10} L1100,${sy - 220} C1020,${sy - 200} 940,${sy - 150} 880,${sy - 70} C850,${sy - 30} 830,${sy + 10} 810,${sy + 60} L810,${H + 10}Z`;
+  land('mid', hd, '#4A5470', '#1A2134', lightFrom(mx, my, PC ? 1400 : 1200, '#DDE4F4', .6));
+  const [tx, ty, ts] = P.tower;
+  add('mid', at(tx, ty, ts, `<path d="M-22,0 L-16,-170 L16,-170 L22,0Z" fill="${vg('#F2F2EE', '#A9B0C0')}"/><path d="M-20,-170 h40 v-12 h-40z" fill="#C9CED8"/><path d="M-12,-182 h24 v-30 h-24z" fill="#FFF2D0"/><path d="M-16,-212 L0,-238 L16,-212Z" fill="#A9B0C0"/><path d="M-6,-120 h12 v18 h-12z M-6,-70 h12 v18 h-12z" fill="#5A6280"/>`));
+  if (S === 'winter') add('mid', `<path d="${hd}" fill="#FFFFFF" opacity=".12"/>`);
+  // the quay along the near shore
+  const qy = P.quayY;
+  add('front', PC ? `<path d="M${X0 - 20},${H + 10} L${X0 - 20},${qy} L900,${qy} L960,${qy + 40} L960,${H + 10}Z" fill="${vg('#7A8298', '#2A3046')}"/>` : `<path d="M-20,${H + 10} L-20,${qy} L560,${qy} L620,${qy + 60} L620,${H + 10}Z" fill="${vg('#7A8298', '#2A3046')}"/>`);
+  { let s = ''; const w = PC ? 70 : 90, x1 = PC ? 900 : 560; for (let x = X0; x < x1; x += w) s += `<path d="M${x},${qy} v${PC ? 40 : 54}" stroke="#4A5068" stroke-width="2" opacity=".6"/>`; s += `<path d="M${X0},${qy + (PC ? 20 : 27)} H${x1}" stroke="#4A5068" stroke-width="2" opacity=".5"/>`; add('front', s); }
+  if (S === 'winter') add('front', PC ? `<path d="M${X0 - 20},${qy} L900,${qy} l8,6 L${X0 - 20},${qy + 6}Z" fill="#F2F4FA"/>` : `<path d="M-20,${qy} L560,${qy} l8,8 L-20,${qy + 8}Z" fill="#F2F4FA"/>`);
+  // a lamp post on the quay
+  const [lx, ly] = P.quayLamp;
+  add('front', `<path d="M${lx},${ly} v-${PC ? 120 : 170}" stroke="#2A3046" stroke-width="${PC ? 5 : 7}"/><rect x="${lx - (PC ? 8 : 11)}" y="${ly - (PC ? 140 : 196)}" width="${PC ? 16 : 22}" height="${PC ? 20 : 28}" rx="3" fill="#FFF2D0"/>`);
+  // the white ship (it rides the swell: drawn by the apps; here, still)
+  const [sx2, sy2, ss] = P.ship;
+  add('moving', `<g class="sway">${at(sx2, sy2, ss, `<path d="M-120,0 C-90,26 80,26 120,0 C124,-10 132,-30 150,-44 C140,-28 136,-14 134,0 Z" fill="#F2F2EE"/><path d="M150,-44 C158,-50 166,-46 164,-38 C160,-40 156,-40 150,-44Z" fill="#F2F2EE"/><path d="M-120,0 C-90,26 80,26 120,0 L118,8 C80,32 -90,32 -118,8Z" fill="#B9C0CE"/><path d="M-6,-6 V-190" stroke="#D8DCE4" stroke-width="5"/><path d="M-2,-186 C60,-150 74,-80 64,-18 L-2,-18Z" fill="url(#sail)"/><path d="M-10,-170 C-60,-130 -70,-70 -62,-20 L-10,-20Z" fill="url(#sail)" opacity=".9"/><circle cx="-112" cy="-8" r="5" fill="#FFF2D0"/>`)}</g>`);
+  def(`<linearGradient id="shipr" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".35"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient><mask id="shipm"><rect x="${sx2 - 200 * ss}" y="${sy2 + 10 * ss}" width="${400 * ss}" height="${200 * ss}" fill="url(#shipr)"/></mask>`);
+  add('back', `<g mask="url(#shipm)"><g transform="translate(0,${2 * sy2 + 20 * ss}) scale(1,-1)">${at(sx2, sy2, ss, `<path d="M-6,-6 V-190" stroke="#D8DCE4" stroke-width="5"/><path d="M-2,-186 C60,-150 74,-80 64,-18 L-2,-18Z M-10,-170 C-60,-130 -70,-70 -62,-20 L-10,-20Z" fill="#E6E8EE"/>`)}</g></g>`);
+  add('moving', `<circle class="pulse" cx="${tx}" cy="${ty - 197 * ts}" r="${60 * ts}" fill="url(#beacon)"/>`);
+  vignette('#02040A', .3);
+  grain('front', .6);
+  return { ink: ['#F2F4FA', '#C9D4EA', '#9AA8C0'], shadow: true };
+}
+
+const out = { shire, redbook, starlit, elven, lorien, havens }[THEME]();
 // a preview clock (the apps draw their own)
 if (CLOCK) {
   const [c1, c2, c3] = out.ink, [x, y] = P.clock;
