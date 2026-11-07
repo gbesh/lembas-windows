@@ -743,7 +743,7 @@ struct Moon : Element {  // tonight's real phase, lit on the right side for your
         gCtx->SetTransform(art);
         FillGlow(glow.Get(), cx, cy, r * 3.2f * (gFullMoon ? 1.3f : 1), r * 3.2f * (gFullMoon ? 1.3f : 1), .9f * (1 - .7f * (float)gEclipse));
         gCtx->SetTransform(art);
-        Solid(0x2A3058, 1);
+        Solid(0xAEB8D6, .13f);   // the unlit part: a faint earthshine, never a dark disc against the sky
         gCtx->FillEllipse(Ellipse(Point2F(cx, cy), r, r), gBrush.Get());
         gCtx->SetTransform((flip ? Matrix3x2F(-1, 0, 0, 1, 2 * cx, 0) : Matrix3x2F::Identity()) * art);
         Solid(0xFFF3D6, 1);
