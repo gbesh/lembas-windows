@@ -302,6 +302,14 @@ static bool gRescene = false;  // the season or the weather changed: rebuild the
 static uint32_t gTintCol = 0; static float gTintA = 0, gGlowA = 0;
 static float gMoonAlt = 1;     // how high tonight's moon is (0 horizon .. 1), below 0 when it has set
 static bool gFullMoon = false, gMeteors = false;
+// The sky's moods, from the same weather.json: a rainbow when the sun comes out after rain, frost
+// on a cold morning, a shimmer on a hot afternoon, a haze of smoke when the air is bad, beacons lit
+// for severe weather, a storm's lightning. And the day's weather in a line of hobbit talk.
+struct Sky { bool rainbow = false, frost = false, heat = false, beacons = false, storm = false; float smoke = 0;
+    bool operator!=(const Sky& o) const { return rainbow != o.rainbow || frost != o.frost || heat != o.heat || beacons != o.beacons || storm != o.storm || std::abs(smoke - o.smoke) > .09f; } };
+static Sky gSky;
+static std::wstring gForecast;
+static bool gSeasonTurn = false;     // the season changed while running: blow the new one in
 
 // --- shared pieces
 struct Glow : Element {  // a soft round light that breathes
@@ -598,6 +606,124 @@ struct Rising : Element {  // a mote of light drifting up through the grove
     }
 };
 
+// --- The sky's moods
+struct Rainbow : Element {  // after rain, the sun out: a faint bow behind the hills
+    float cx, cy, r;
+    Rainbow(float x, float y, float rr) : cx(x), cy(y), r(rr) { still = true; }
+    D2D1_RECT_F Bounds(double) override { return RectF(cx - r - 10, cy - r - 10, cx + r + 10, cy); }
+    void Draw(double, const D2D1_MATRIX_3X2_F& art) override {
+        static const uint32_t col[7] = { 0xE8574A, 0xF29A3A, 0xF6D35A, 0x7CC26A, 0x5AA8D8, 0x6A6CC8, 0x9A6AC0 };
+        gCtx->SetTransform(art);
+        gCtx->PushAxisAlignedClip(RectF(cx - r - 10, cy - r - 10, cx + r + 10, cy), D2D1_ANTIALIAS_MODE_ALIASED);
+        for (int i = 0; i < 7; i++) { Solid(col[i], .21f); gCtx->DrawEllipse(Ellipse(Point2F(cx, cy), r - i * 12.f, r - i * 12.f), gBrush.Get(), 12); }
+        gCtx->PopAxisAlignedClip();
+    }
+};
+struct Beacon : Element {  // a beacon fire on a far hill, lit for severe weather
+    float x, y, ph;
+    static ComPtr<ID2D1RadialGradientBrush> glow;
+    ComPtr<ID2D1PathGeometry> flame = Path("M-5,0 C-3,-0.333 -1.333,-0.667 0,-1 C1.333,-0.667 3,-0.333 5,0 Z");   // one unit tall: scaled to the flicker
+    Beacon(float x_, float y_, float p) : x(x_), y(y_), ph(p) { slow = true; rate = 12; }
+    D2D1_RECT_F Bounds(double) override { return Circle(x, y - 8, 46); }
+    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
+        float k = .55f + .45f * std::fabs(std::sin((float)t * (5 + ph) + ph));
+        gCtx->SetTransform(art);
+        FillGlow(glow.Get(), x, y - 8, 34 * (.85f + .25f * k), 34 * (.85f + .25f * k), .6f + .4f * k);
+        float fh = 14 * (.8f + .3f * k);
+        gCtx->SetTransform(Matrix3x2F::Scale(1, fh) * Matrix3x2F::Translation(x, y) * art);
+        Solid(0xFFD27A, 1); gCtx->FillGeometry(flame.Get(), gBrush.Get());
+    }
+};
+ComPtr<ID2D1RadialGradientBrush> Beacon::glow;
+struct Bolt : Element {  // a storm: a bolt of lightning far off now and then, and the sky flashing
+    bool flash;
+    explicit Bolt(bool f) : flash(f) { smooth = true; }
+    float P(double t) { return Phase(t, 9, 0); }
+    D2D1_RECT_F Bounds(double t) override {
+        float p = P(t);
+        if (flash) return (p < .035f) ? RectF(ART_L, 0, ART_R, 1080) : Empty();
+        return p < .03f ? RectF(ART_L, 0, ART_R, 600) : Empty();
+    }
+    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
+        float p = P(t);
+        gCtx->SetTransform(art);
+        if (flash) {
+            float f = p < .012f ? .3f : (p > .02f && p < .03f) ? .18f : 0;
+            if (f > 0) { Solid(0xF4F2FF, f); gCtx->FillRectangle(RectF(ART_L, 0, ART_R, 1080), gBrush.Get()); }
+            return;
+        }
+        if (p >= .03f) return;
+        int n = (int)std::floor(t / 9);
+        float x = ART_L + (ART_R - ART_L) * (.15f + .7f * std::fmod(n * .618f, 1.f)), y = 80;
+        Rng r((uint32_t)n + 7);
+        Solid(0xF4F2FF, 1 - p / .03f);
+        while (y < 560) { float nx = x + ((float)r() - .5f) * 60, ny = y + 40 + (float)r() * 40; gCtx->DrawLine(Point2F(x, y), Point2F(nx, ny), gBrush.Get(), 3, Glint::gRound.Get()); x = nx; y = ny; }
+    }
+};
+struct Haze : Element {  // smoke in the air (bushfires), or frost on the ground: a still wash
+    ComPtr<ID2D1LinearGradientBrush> b; float top;
+    Haze(std::initializer_list<D2D1_GRADIENT_STOP> st, float y0, float y1) : top(y0) {
+        still = true;
+        std::vector<D2D1_GRADIENT_STOP> v(st);
+        ComPtr<ID2D1GradientStopCollection> c;
+        gCtx->CreateGradientStopCollection(v.data(), (UINT32)v.size(), &c);
+        gCtx->CreateLinearGradientBrush(LinearGradientBrushProperties(Point2F(0, y0), Point2F(0, y1)), c.Get(), &b);
+    }
+    D2D1_RECT_F Bounds(double) override { return RectF(ART_L, top, ART_R, 1080); }
+    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override { gCtx->SetTransform(art); gCtx->FillRectangle(Bounds(t), b.Get()); }
+};
+struct Sparkle : Element {  // frost glinting on the grass
+    float x, y, r, dur, off;
+    Sparkle(float x_, float y_, float r_, float d, float o) : x(x_), y(y_), r(r_), dur(d), off(o) { slow = true; rate = 6; }
+    D2D1_RECT_F Bounds(double) override { return Circle(x, y, r + 1); }
+    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
+        float k = .5f - .5f * std::cos(2 * PI * Phase(t, dur, off));
+        gCtx->SetTransform(art); Solid(0xFFFFFF, .78f * k); gCtx->FillEllipse(Ellipse(Point2F(x, y), r, r), gBrush.Get());
+    }
+};
+struct Shimmer : Element {  // the air wavering over the land on a hot afternoon
+    float y, ph;
+    Shimmer(float y_, float p) : y(y_), ph(p) { slow = true; rate = 15; }
+    D2D1_RECT_F Bounds(double) override { return RectF(ART_L - 80, y - 12, ART_R + 80, y + 12); }
+    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
+        float dx = 30 * std::sin((float)t * .9f + ph), dy = 4 * std::sin((float)t * 2 + ph);
+        gCtx->SetTransform(art); Solid(0xFFF6E0, .085f);
+        gCtx->DrawLine(Point2F(ART_L - 60 + dx, y + dy), Point2F(ART_R + 60 + dx, y - dy), gBrush.Get(), 6, Glint::gRound.Get());
+    }
+};
+struct WindowDrop : Element {  // rain on the window by the Red Book: the shadow of a drop sliding down the page
+    float x, dur, off, r;
+    WindowDrop(float x_, float d, float o, float rr) : x(x_), dur(d), off(o), r(rr) { slow = true; rate = 15; }
+    float Y(double t) { float p = Phase(t, dur, off); return -40 + 1160 * (p * p * (3 - 2 * p)); }
+    D2D1_RECT_F Bounds(double t) override { float y = Y(t); return RectF(x - r - 1, y - r * 9, x + r + 1, y + r * 1.4f); }
+    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
+        float y = Y(t);
+        gCtx->SetTransform(art);
+        Solid(0x3A2614, .1f); gCtx->FillEllipse(Ellipse(Point2F(x, y), r, r * 1.3f), gBrush.Get());
+        Solid(0x3A2614, .05f); gCtx->DrawLine(Point2F(x, y - r * 9), Point2F(x, y - r), gBrush.Get(), r * .7f, Glint::gRound.Get());
+    }
+};
+struct SeasonBit : Element {  // the new season blowing in for a minute: blossom, leaves, snow or thistledown
+    float bx, by, sp, ph; int kind; uint32_t col; double t0 = -1;
+    SeasonBit(float x, float y, float s, float p, int k, uint32_t c) : bx(x), by(y), sp(s), ph(p), kind(k), col(c) { smooth = true; }
+    D2D1_POINT_2F At(double t) {
+        if (t0 < 0) t0 = t;
+        float e = (float)(t - t0);
+        return Point2F(ART_L + std::fmod(bx + e * 38 * sp + 30 * std::sin(e * .8f + ph), ART_R - ART_L), std::fmod(by + e * 54 * sp, 1180.f) - 50);
+    }
+    float Amount(double t) { float f = (float)((t - t0) / 60); return (t0 < 0 || f >= 1) ? (t0 < 0 ? 1.f : 0.f) : std::sin(PI * f); }
+    D2D1_RECT_F Bounds(double t) override { auto c = At(t); return Amount(t) > 0 ? Circle(c.x, c.y, 10) : Empty(); }
+    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
+        float a = Amount(t); if (a <= 0) return;
+        auto c = At(t); float e = (float)(t - t0);
+        gCtx->SetTransform(Matrix3x2F::Rotation(e * 70 * sp + ph * 57) * Matrix3x2F::Translation(c.x, c.y) * art);
+        Solid(col, .9f * a);
+        if (kind == 3) gCtx->FillEllipse(Ellipse(Point2F(0, 0), 2.5f + sp * 2, 2.5f + sp * 2), gBrush.Get());
+        else if (kind == 1) gCtx->FillEllipse(Ellipse(Point2F(0, 0), 1.8f, 1.8f), gBrush.Get());
+        else gCtx->FillEllipse(Ellipse(Point2F(0, 0), kind == 2 ? 6.f : 4.f, kind == 2 ? 2.8f : 2.4f), gBrush.Get());
+    }
+};
+
 // --- Weather, over the outdoor scenes
 struct Drop : Element {  // rain: a slanting streak
     float x, dur, off, len;
@@ -720,6 +846,50 @@ struct Scene {
 };
 static Scene* gScene;
 
+// Where each look's sky moods go: behind the land, on the far hills, over everything.
+static void AddSky(std::vector<Element*>& E, SceneId id) {
+    auto at = [&](int layer) { for (size_t i = 0; i < E.size(); i++) if (E[i]->layer == layer) return (int)i; return -1; };
+    auto insertBefore = [&](int layer, Element* e) { int i = at(layer); if (i < 0) E.push_back(e); else E.insert(E.begin() + i, e); };
+    bool outdoors = id != REDBOOK;
+    int midOrFront = at(1) >= 0 ? 1 : 2;
+    if (gSky.rainbow && (id == SHIRE || id == LORIEN)) insertBefore(midOrFront, new Rainbow(1200, 1000, 800));
+    if (gSky.storm && outdoors) { insertBefore(midOrFront, new Bolt(false)); E.push_back(new Bolt(true)); }
+    if (gSky.beacons && outdoors) {
+        std::vector<std::pair<float, float>> spots;
+        if (id == SHIRE) spots = { {-220, 488}, {380, 480}, {1020, 492}, {1660, 484}, {2240, 490} };
+        else if (id == STARLIT) spots = { {640, 540}, {1180, 498}, {1500, 610}, {-300, 570} };
+        else if (id == ELVEN) spots = { {300, 530}, {1700, 520}, {-200, 560} };
+        else if (id == HAVENS) spots = { {300, 690}, {1700, 700}, {900, 730} };
+        int i = 0;
+        for (auto& sp : spots) insertBefore(2, new Beacon(sp.first, sp.second, (float)i++));
+    }
+    if (gSky.heat && outdoors) for (int k = 0; k < 4; k++) insertBefore(2, new Shimmer(540.f + k * 22, k * 1.7f));
+    if (gSky.frost && outdoors) {
+        E.push_back(new Haze({ {0, Hex(0xE8F2FF, 0)}, {1, Hex(0xE8F2FF, .3f)} }, 560, 1080));
+        Rng r(91);
+        for (int i = 0; i < 70; i++) E.push_back(new Sparkle(frand10(ART_L + r() * (ART_R - ART_L)), frand10(560 + r() * 520), frand10(1 + r() * 1.6), frand10(3 + r() * 4), frand10(r() * 4)));
+    }
+    if (gSky.smoke > 0) {
+        bool warm = id == SHIRE || id == REDBOOK || id == LORIEN;
+        uint32_t c = warm ? 0xC0905A : 0x6A5040; float a = gSky.smoke * .43f;
+        E.push_back(new Haze({ {0, Hex(c, a / 3)}, {.52f, Hex(c, a)}, {1, Hex(c, a * 2 / 3)} }, 0, 1080));
+    }
+    if (id == REDBOOK && (gWx == 3 || gWx == 5)) {
+        E.push_back(new Haze({ {0, Hex(0x8AA0C0, .08f)}, {1, Hex(0x8AA0C0, .08f)} }, 0, 1080));
+        Rng r(92);
+        for (int i = 0; i < 12; i++) E.push_back(new WindowDrop(frand10(ART_L + r() * (ART_R - ART_L)), frand10(24 + r() * 32), frand10(r() * 14), frand10(4 + r() * 5)));
+    }
+    if (gSeasonTurn) {
+        int sn = SeasonNow();
+        Rng r(2026);
+        for (int i = 0; i < 48; i++) {
+            uint32_t col = sn == 3 ? 0xFFFFFF : sn == 0 ? (i % 3 ? 0xF2B8C6 : 0xFFFFFF) : sn == 2 ? (i % 3 == 0 ? 0xD9843A : i % 3 == 1 ? 0xE8A646 : 0xC8562E) : 0xFFF6D8;
+            E.push_back(new SeasonBit(frand10(r() * (ART_R - ART_L)), frand10(r() * 1100), frand10(.6 + r() * .8), frand10(r() * 6.28), sn == 3 ? 3 : sn == 1 ? 1 : sn == 2 ? 2 : 0, col));
+        }
+        gSeasonTurn = false;
+    }
+}
+
 static void AddWeather(std::vector<Element*>& E, SceneId id) {
     if (id == REDBOOK) return;  // a map indoors: no weather
     Rng r(77);
@@ -838,6 +1008,7 @@ static Scene* BuildScene(SceneId id) {
         s->layers = { 0, 1, 2 };
     }
     AddWeather(E, id);
+    AddSky(E, id);
     if (id == SHIRE) E.push_back(new Visitor(0));
     if (id == STARLIT) E.push_back(new Visitor(1));
     if (id == ELVEN) E.push_back(new Visitor(2));
@@ -849,6 +1020,7 @@ static void InitShared() {
     gFactory->CreateStrokeStyle(StrokeStyleProperties(D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_LINE_JOIN_ROUND), nullptr, 0, &Glint::gRound);
     Lamp::glow = Radial({ {0, Hex(0xF3E3B4, .45f)}, {1, Hex(0xF3E3B4, 0)} });
     Lamp::goldGlow = Radial({ {0, Hex(0xFFE7A8, .6f)}, {1, Hex(0xFFE7A8, 0)} });
+    Beacon::glow = Radial({ {0, Hex(0xFF9A3A, .8f)}, {1, Hex(0xFF7A2A, 0)} });
     Moon::glow = Radial({ {0, Hex(0xFFF7E0, .55f)}, {1, Hex(0xFFF7E0, 0)} });
     // cloud = one shape (so overlapping puffs don't double up their transparency)
     ComPtr<ID2D1RoundedRectangleGeometry> rr;
@@ -863,7 +1035,7 @@ static void InitShared() {
     Cloud::shape = grp;
 }
 static void ReleaseShared() {
-    Glint::gRound.Reset(); Lamp::glow.Reset(); Lamp::goldGlow.Reset(); Cloud::shape.Reset(); Moon::glow.Reset();
+    Glint::gRound.Reset(); Lamp::glow.Reset(); Lamp::goldGlow.Reset(); Beacon::glow.Reset(); Cloud::shape.Reset(); Moon::glow.Reset();
 }
 
 // ------------------------------------------------------------------------------------ settings
@@ -1009,7 +1181,7 @@ static SceneId SunScene(const SYSTEMTIME& now) {
 // The weather Lembas Sun saved (weather.json: {"wx": 0..5, "at": unix seconds}); clear if it's off,
 // missing or more than four hours old.
 static int ReadWeather() {
-    gWind = false;
+    gWind = false; gSky = Sky(); gForecast.clear();
     if (!gSet.weather) return 0;
     wchar_t base[MAX_PATH];
     GetEnvironmentVariableW(L"LOCALAPPDATA", base, MAX_PATH);
@@ -1025,6 +1197,21 @@ static int ReadWeather() {
         if (now - _wtof(at.c_str()) > 4 * 3600) return 0;
     }
     gWind = wind;
+    // the sky's moods (worked out each minute, so they come and go on time)
+    FILETIME ft; GetSystemTimeAsFileTime(&ft);
+    double nowS = ((double)(((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime) - 116444736000000000.0) / 1e7;
+    SYSTEMTIME lt; GetLocalTime(&lt);
+    auto num = [&](const wchar_t* k, double d) { std::wstring x; return JsonValue(j, k, x) ? _wtof(x.c_str()) : d; };
+    double temp = num(L"temp", 15), rainAt = num(L"rainAt", 0), pm = num(L"pm25", 0), pmAt = num(L"pmAt", 0);
+    bool day = num(L"day", 1) > .5;
+    gSky.rainbow = day && (wx == 0 || wx == 1) && rainAt > 0 && nowS - rainAt < 50 * 60;
+    gSky.frost = temp <= 2 && lt.wHour >= 4 && lt.wHour <= 10 && wx != 3;
+    gSky.heat = day && temp >= 32 && lt.wHour >= 11 && lt.wHour <= 18;
+    gSky.beacons = num(L"severe", 0) > .5;
+    gSky.storm = wx == 5;
+    gSky.smoke = nowS - pmAt < 3 * 3600 ? std::min(1.0, std::max(0.0, (pm - 25) / 75)) : 0.f;
+    std::wstring fc;
+    if (JsonValue(j, L"forecast", fc)) gForecast = fc;
     return std::min(5, std::max(0, wx));
 }
 
@@ -1036,9 +1223,12 @@ static void CheckSun() {
     if (minute == lastMinute) return;
     lastMinute = minute;
     if (++sinceReload >= 10) { sinceReload = 0; LoadSettings(); }  // the time zone (and so the city) may have changed
+    static Sky lastSky;
     gWx = ReadWeather();
     static bool lastWind = false;
-    if (gScene && (gScene->season != SeasonNow() || gScene->weather != gWx || gWind != lastWind)) gRescene = true;
+    if (gScene && gScene->season != SeasonNow()) gSeasonTurn = true;   // a new season, while you watch
+    if (gScene && (gScene->season != SeasonNow() || gScene->weather != gWx || gWind != lastWind || gSky != lastSky)) gRescene = true;
+    lastSky = gSky;
     lastWind = gWind;
     if (!gSet.adaptive || gForced != NONE) return;
     SceneId want = SunScene(st), shown = SceneFromWallpaper();
@@ -2128,6 +2318,7 @@ static void PanelContent(SceneId sc) {
     SunDay d = SunToday(st, gSet.lat, gSet.lon);
     add(L"TODAY'S SUN", L"", alegreya, 11, 2, 16);
     add(L"Sunrise " + HourMinute(d.rise) + L"  ·  Sunset " + HourMinute(d.set), L"", alegreya, 14, 1, 6);
+    if (!gForecast.empty()) add(gForecast, L"", garamond, 16, 1, 4, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_ITALIC);   // the day's weather, hobbit-fashion
     if (gSet.adaptive && gForced == NONE) {
         int m = st.wHour * 60 + st.wMinute;
         struct B { int at; SceneId to; } bs[] = { { d.rise, SHIRE }, { d.evening, SeasonNow() == 2 ? LORIEN : REDBOOK }, { d.set, STARLIT }, { 23 * 60, ELVEN }, { 2 * 60, HAVENS } };

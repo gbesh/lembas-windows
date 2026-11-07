@@ -154,16 +154,60 @@ if (-not ($config.PSObject.Properties['livingDesktop'] -and -not $config.livingD
 # ------------------------------------------------------------------ the weather (hourly, if it's on)
 # One small request to the free Open-Meteo service for your time zone's city (no location
 # permission); Lembas Desktop draws rain, snow, fog or cloud over the scene from weather.json.
+# Today's weather as a hobbit would put it, by the mealtimes (the same words as the phone)
+function Get-HobbitForecast($h) {
+    $meals = @(@(7, 'breakfast'), @(9, 'second breakfast'), @(11, 'elevenses'), @(13, 'luncheon'), @(16, 'afternoon tea'), @(18, 'dinner'), @(20, 'supper'), @(23, 'bedtime'))
+    function MealAt([int]$hr) { foreach ($m in $meals) { if ($m[0] -ge $hr) { return $m[1] } }; 'bedtime' }
+    function KindOf([int]$c, [int]$p) {
+        if ($c -ge 95) { 'storm' } elseif (($c -ge 71 -and $c -le 77) -or $c -eq 85 -or $c -eq 86) { 'snow' }
+        elseif (((($c -ge 51 -and $c -le 67) -or ($c -ge 80 -and $c -le 82)) -and $p -ge 40) -or $p -ge 70) { 'wet' }
+        elseif ($c -eq 45 -or $c -eq 48) { 'fog' } elseif ($c -eq 3) { 'cloud' } else { 'fine' } }
+    $n = [math]::Min(14, @($h.time).Count)
+    if ($n -lt 3) { return '' }
+    $hours = @(0..($n - 1) | ForEach-Object { [int]$h.time[$_].Substring(11, 2) })
+    $kinds = @(0..($n - 1) | ForEach-Object { KindOf ([int]$h.weather_code[$_]) ([int]$h.precipitation_probability[$_]) })
+    $temps = @(0..($n - 1) | ForEach-Object { [double]$h.temperature_2m[$_] })
+    $maxT = ($temps | Measure-Object -Maximum).Maximum; $minT = ($temps | Measure-Object -Minimum).Minimum
+    $wet = @('wet', 'storm', 'snow')
+    $word = @{ storm = 'Thunder'; snow = 'Snow'; wet = 'Rain' }
+    $night = $hours[0] -ge 20 -or $hours[0] -lt 5
+    $firstWet = -1; for ($i = 0; $i -lt $n; $i++) { if ($wet -contains $kinds[$i]) { $firstWet = $i; break } }
+    if ($wet -contains $kinds[0]) {
+        $dry = -1; for ($i = 0; $i -lt $n; $i++) { if ($wet -notcontains $kinds[$i]) { $dry = $i; break } }
+        if ($dry -lt 0) { if ($kinds[0] -eq 'snow') { return 'Snow all day: a day for the fireside' } else { return 'Wet all day: a day for the fireside' } }
+        return "$($word[$kinds[0]]) until $(MealAt $hours[$dry]), then clearing"
+    }
+    if ($firstWet -gt 0) {
+        $k = $kinds[$firstWet]; $after = -1
+        for ($i = $firstWet; $i -lt $n; $i++) { if ($wet -notcontains $kinds[$i]) { $after = $i; break } }
+        $t = "$($word[$k]) by $(MealAt $hours[$firstWet])"
+        if ($after -gt 0) { $t += ", clear for $(MealAt $hours[$after])" }
+        if ($k -eq 'storm') { $t += ': stay in' }
+        return $t
+    }
+    if ($kinds[0] -eq 'fog') { $c = 1; for ($i = 0; $i -lt $n; $i++) { if ($kinds[$i] -ne 'fog') { $c = [math]::Max(1, $i); break } }; return "Mist until $(MealAt $hours[$c])" }
+    if ($maxT -ge 32) { return 'A hot one: find shade by luncheon' }
+    if ($minT -le 1 -and -not $night) { return 'Frost early: wrap up warm' }
+    if ($night) { if (@($kinds[0..([math]::Min(5, $n - 1))] | Where-Object { $_ -ne 'fine' }).Count -eq 0) { return 'A clear night for stargazing' } else { return 'A quiet, cloudy night' } }
+    if (@($kinds | Where-Object { $_ -eq 'fine' }).Count -ge [math]::Floor($n * 2 / 3)) { return 'A fine day for a walk' }
+    'Dry and grey: a good day for errands'
+}
+
 function Update-Weather {
     $file = Join-Path $Dest 'weather.json'
     if ($config.PSObject.Properties['weather'] -and -not $config.weather) { Remove-Item $file -ErrorAction SilentlyContinue; return }
     if ((Test-Path $file) -and ((Get-Date) - (Get-Item $file).LastWriteTime).TotalMinutes -lt 18) { return }
+    $old = $null; try { if (Test-Path $file) { $old = Get-Content $file -Raw | ConvertFrom-Json } } catch { }
     try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $lat = ([double]$config.latitude).ToString([Globalization.CultureInfo]::InvariantCulture)
-        $lon = ([double]$config.longitude).ToString([Globalization.CultureInfo]::InvariantCulture)
-        $w = Invoke-RestMethod "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=weather_code,precipitation,wind_speed_10m" -TimeoutSec 15
+        $inv = [Globalization.CultureInfo]::InvariantCulture
+        $lat = ([double]$config.latitude).ToString($inv)
+        $lon = ([double]$config.longitude).ToString($inv)
+        $w = Invoke-RestMethod ("https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon" +
+            "&current=weather_code,precipitation,wind_speed_10m,wind_gusts_10m,temperature_2m,is_day" +
+            "&hourly=weather_code,precipitation_probability,precipitation,temperature_2m,wind_gusts_10m&forecast_hours=16&timezone=auto") -TimeoutSec 15
         $code = [int]$w.current.weather_code
+        $rawCode = $code
         $rain = if ($null -ne $w.current.precipitation) { [double]$w.current.precipitation } else { 1.0 }
         # rain only when rain is falling: forecast light drizzle with nothing in the gauge (a damp,
         # humid evening) shows as cloud
@@ -171,9 +215,26 @@ function Update-Weather {
         # WMO codes -> 0 clear, 1 cloudy, 2 fog, 3 rain, 4 snow, 5 storm
         $wx = if ($code -le 1) { 0 } elseif ($code -le 3) { 1 } elseif ($code -le 48) { 2 } elseif ($code -le 67 -or ($code -ge 80 -and $code -le 82)) { 3 } `
               elseif ($code -le 77 -or $code -eq 85 -or $code -eq 86) { 4 } else { 5 }
-        $at = [int][double]::Parse((Get-Date -UFormat %s), [Globalization.CultureInfo]::InvariantCulture)
-        $wind = [int][double]$w.current.wind_speed_10m
-        Set-Content -Path $file -Value "{ `"wx`": $wx, `"code`": $code, `"wind`": $wind, `"at`": $at }" -Encoding UTF8
+        $at = [int64][double]::Parse((Get-Date -UFormat %s), $inv)
+        $rainAt = if ($wx -eq 3 -or $wx -eq 5) { $at } elseif ($old -and $old.rainAt) { [int64]$old.rainAt } else { 0 }
+        # severe weather now or in the next few hours: damaging gusts, hail, a deluge, fierce heat or cold
+        $severe = ([double]$w.current.wind_gusts_10m -ge 90) -or ($rawCode -in 96, 99)
+        for ($i = 0; $i -lt [math]::Min(6, @($w.hourly.time).Count); $i++) {
+            if ([double]$w.hourly.wind_gusts_10m[$i] -ge 90 -or [double]$w.hourly.precipitation[$i] -ge 15 -or ([int]$w.hourly.weather_code[$i] -in 96, 99) -or
+                [double]$w.hourly.temperature_2m[$i] -ge 42 -or [double]$w.hourly.temperature_2m[$i] -le -15) { $severe = $true }
+        }
+        # the air, once an hour (for bushfire smoke and the like)
+        $pm = if ($old -and $null -ne $old.pm25) { [double]$old.pm25 } else { 0 }
+        $pmAt = if ($old -and $old.pmAt) { [int64]$old.pmAt } else { 0 }
+        if ($at - $pmAt -gt 3600) {
+            try { $a = Invoke-RestMethod "https://air-quality-api.open-meteo.com/v1/air-quality?latitude=$lat&longitude=$lon&current=pm2_5" -TimeoutSec 15; $pm = [double]$a.current.pm2_5; $pmAt = $at } catch { }
+        }
+        $out = [ordered]@{
+            wx = $wx; code = $rawCode; wind = [int][double]$w.current.wind_speed_10m; at = $at
+            temp = [math]::Round([double]$w.current.temperature_2m, 1); day = [int]$w.current.is_day; rainAt = $rainAt
+            severe = [int]$severe; pm25 = [math]::Round($pm, 1); pmAt = $pmAt; forecast = (Get-HobbitForecast $w.hourly)
+        }
+        Set-Content -Path $file -Value ($out | ConvertTo-Json -Compress) -Encoding UTF8
     } catch { Log "  weather: $($_.Exception.Message)" }
 }
 Update-Weather
