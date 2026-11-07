@@ -220,6 +220,11 @@ try {
     $remoteUpdated = if ($remote) { [long](Get-Prop $remote 'updated' 0) } else { 0 }
     $changedThere = $remoteUpdated -gt [long]$syncState.remoteUpdated
     if ($remote) { Use-PhoneArea $remote }
+    # the walk to Mount Doom, from the phone: for today's panel
+    $walkFile = Join-Path $Dest 'walk.json'
+    $walk = if ($remote) { Get-Prop $remote 'walk' $null } else { $null }
+    if ($walk) { [ordered]@{ km = [int](Get-Prop $walk 'km' 0); line = [string](Get-Prop $walk 'line' '') } | ConvertTo-Json | Set-Content $walkFile -Encoding UTF8 }
+    elseif ($remote -and (Test-Path $walkFile)) { Remove-Item $walkFile -ErrorAction SilentlyContinue }
     $now = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 
     if ($remote -and $changedThere -and -not ($changedHere -and $syncState.sig -ne '')) {
@@ -243,6 +248,7 @@ try {
         $out = [ordered]@{ v = 1; updated = $now; by = 'PC' }
         foreach ($k in $mine.Keys) { $out[$k] = $mine[$k] }
         if ($remote -and $null -ne (Get-Prop $remote 'lat' $null)) { $out['lat'] = $remote.lat; $out['lon'] = $remote.lon }   # the phone's area stays for the phone to change
+        if ($walk) { $out['walk'] = $walk }   # and so does the walk
         Write-Remote ($(if ($remoteMeta) { $remoteMeta.id } else { $null })) $out
         Log ("sent this PC's settings: look {0}" -f $mine.look)
         $syncState = [pscustomobject]@{ sig = (Sig $mine); remoteUpdated = $now }

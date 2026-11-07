@@ -53,6 +53,9 @@ jobs:
           get OFL-IMFellEnglish.txt        "$base/imfellenglish/OFL.txt"
           get OFL-Fraunces.txt             "$base/fraunces/OFL.txt"
           get OFL-AlegreyaSans.txt         "$base/alegreyasans/OFL.txt"
+          # Alcarin Tengwar (Open Font License), for the optional Elvish script on the clock
+          get AlcarinTengwar.otf           "https://raw.githubusercontent.com/Tosche/Alcarin-Tengwar/main/Fonts%20Static/AlcarinTengwar-Regular.otf"
+          get OFL-AlcarinTengwar.txt       "https://raw.githubusercontent.com/Tosche/Alcarin-Tengwar/main/OFL.txt"
 
       - name: Lembas Desktop (native app, cross-compiled for ARM64 and x64)
         run: |

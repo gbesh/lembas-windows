@@ -136,10 +136,11 @@ $userFonts = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
 New-Item -ItemType Directory -Path $userFonts -Force | Out-Null
 $fontReg = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
 Ensure-Key $fontReg
-foreach ($f in Get-ChildItem (Join-Path $Dest 'Fonts') -Filter *.ttf) {
+foreach ($f in Get-ChildItem (Join-Path $Dest 'Fonts') | Where-Object { $_.Extension -in '.ttf', '.otf' }) {
     $target = Join-Path $userFonts ("Lembas-" + $f.Name)
     if (-not (Test-Path $target)) { Copy-Item $f.FullName $target -Force }
-    Set-ItemProperty -Path $fontReg -Name ("Lembas " + $f.BaseName + " (TrueType)") -Value $target
+    $kind = if ($f.Extension -eq '.otf') { 'OpenType' } else { 'TrueType' }
+    Set-ItemProperty -Path $fontReg -Name ("Lembas " + $f.BaseName + " ($kind)") -Value $target
     [void][Lembas.Native]::AddFontResource($target)
 }
 $r = [UIntPtr]::Zero

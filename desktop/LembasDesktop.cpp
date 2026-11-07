@@ -46,6 +46,10 @@
 #include <vector>
 #include <algorithm>
 #include <atomic>
+#include <map>
+#include <set>
+#include <mmdeviceapi.h>
+#include "Words.h"
 
 using Microsoft::WRL::ComPtr;
 using namespace D2D1;
@@ -135,6 +139,7 @@ static D2D1_RECT_F TransformRect(const D2D1_RECT_F& r, const D2D1_MATRIX_3X2_F& 
 // ------------------------------------------------------------------------------------ globals
 static ComPtr<ID2D1Factory1> gFactory;
 static ComPtr<IDWriteFactory> gDWrite;
+static ComPtr<IDWriteFontCollection> gFonts;   // the system's fonts (the kit installs the Lembas ones for you)
 static ComPtr<IWICImagingFactory> gWic;
 static ComPtr<ID3D11Device> gD3D;
 static ComPtr<ID2D1Device> gD2DDevice;
@@ -368,6 +373,142 @@ static int DurinsDay(int year, bool south, int& month, int& dayOut) {
 }
 }  // namespace Heavens
 
+// ------------------------------------------------------------------------------------ small touches
+// Days since 1970-01-01 for a local date (for the day's saying, and the Deeds).
+static long EpochDay(const SYSTEMTIME& st) {
+    int y = st.wYear, m = st.wMonth, d = st.wDay;
+    y -= m <= 2;
+    long era = (y >= 0 ? y : y - 399) / 400;
+    unsigned yoe = (unsigned)(y - era * 400);
+    unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + (long)doe - 719468;
+}
+static long Today() { SYSTEMTIME st; GetLocalTime(&st); return EpochDay(st); }
+
+// Today's hobbit saying: the same one the phone shows today.
+static std::wstring SayingToday() {
+    const long n = (long)(sizeof kSayings / sizeof kSayings[0]);
+    long i = (Today() * 37 + 11) % n; if (i < 0) i += n;
+    return kSayings[i];
+}
+
+// A Sindarin greeting for the hour, and its English (as on the phone and the watch).
+static void Greeting(int hour, std::wstring& elvish, std::wstring& english) {
+    struct G { int from, to; const wchar_t *el, *en; };
+    static const G g[] = { {4, 6, L"Le suilon", L"I greet you"}, {7, 10, L"Aur vaer", L"good morning"}, {11, 13, L"Suilad", L"greetings"},
+                           {14, 17, L"Galu", L"good fortune"}, {18, 20, L"Mae govannen", L"well met"}, {21, 23, L"Losto mae", L"sleep well"} };
+    elvish = L"Novaer"; english = L"be well";
+    for (auto& x : g) if (hour >= x.from && hour <= x.to) { elvish = x.el; english = x.en; }
+}
+
+// The Deeds of the Red Book seen on this PC: the rare things (a fox, a falling star, a rainbow, the
+// moon in shadow...), each written down the first time and counted after. Kept in deeds.txt beside
+// the settings, one line each: id, first day, last day, times.
+struct DeedRec { long first = 0, last = 0; int count = 0; };
+static std::map<std::string, DeedRec> gDeeds;
+static bool gDeedsLoaded = false;
+static std::wstring DeedsPath() {
+    wchar_t base[MAX_PATH]; GetEnvironmentVariableW(L"LOCALAPPDATA", base, MAX_PATH);
+    return std::wstring(base) + L"\\Lembas\\deeds.txt";
+}
+static void LoadDeeds() {
+    if (gDeedsLoaded) return;
+    gDeedsLoaded = true;
+    FILE* f = _wfopen(DeedsPath().c_str(), L"r");
+    if (!f) return;
+    char id[64]; long a, b; int c;
+    while (std::fscanf(f, "%63s %ld %ld %d", id, &a, &b, &c) == 4) gDeeds[id] = { a, b, c };
+    std::fclose(f);
+}
+static void Deed(const char* id) {
+    static std::set<std::string> today; static long day = 0;
+    long d = Today();
+    if (d != day) { day = d; today.clear(); }
+    if (!today.insert(id).second) return;
+    LoadDeeds();
+    auto& r = gDeeds[id];
+    if (r.last == d) return;
+    if (!r.first) r.first = d;
+    r.last = d; r.count++;
+    FILE* f = _wfopen(DeedsPath().c_str(), L"w");
+    if (!f) return;
+    for (auto& kv : gDeeds) std::fprintf(f, "%s %ld %ld %d\n", kv.first.c_str(), kv.second.first, kv.second.last, kv.second.count);
+    std::fclose(f);
+}
+
+// English in Tengwar (a simple general-use tehtar mode; the same rules as the phone's Tengwar.kt):
+// letters by sound-ish spelling, each vowel as a tehta on the consonant after it (on a short carrier
+// when none follows), a silent final e as a dot beneath, doubled letters with a bar beneath, n or m
+// before a stop as a bar above, and Tengwar numerals. For the Alcarin Tengwar font (Free Tengwar layout).
+namespace Tengwar {
+struct U { bool vowel; int code; bool lng; std::vector<int> marks; };
+static int Cons(const std::wstring& k) {
+    static const std::map<std::wstring, int> c = {
+        {L"th", 0xE008}, {L"sh", 0xE00A}, {L"ch", 0xE002}, {L"ng", 0xE012}, {L"wh", 0xE029}, {L"ph", 0xE009}, {L"ck", 0xE003}, {L"qu", 0xE003},
+        {L"t", 0xE000}, {L"p", 0xE001}, {L"k", 0xE003}, {L"c", 0xE003}, {L"d", 0xE004}, {L"b", 0xE005}, {L"j", 0xE006}, {L"g", 0xE007},
+        {L"f", 0xE009}, {L"v", 0xE00D}, {L"n", 0xE010}, {L"m", 0xE011}, {L"w", 0xE015}, {L"l", 0xE022}, {L"s", 0xE024}, {L"z", 0xE026},
+        {L"h", 0xE028}, {L"r", 0xE014}, {L"x", 0xE003}, {L"y", 0xE016} };
+    auto it = c.find(k); return it == c.end() ? 0 : it->second;
+}
+static int Vow(wchar_t v) { switch (v) { case 'a': return 0xE040; case 'e': return 0xE046; case 'i': case 'y': return 0xE044; case 'o': return 0xE04A; case 'u': return 0xE04C; } return 0; }
+static bool IsV(wchar_t c) { return c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u'; }
+static std::wstring Word(std::wstring w) {
+    for (auto& ch : w) ch = (wchar_t)towlower(ch);
+    std::wstring out;
+    if (!w.empty() && std::all_of(w.begin(), w.end(), iswdigit)) { for (wchar_t ch : w) out += (wchar_t)(0xE070 + (ch - '0')); return out; }
+    std::vector<U> u;
+    for (size_t i = 0; i < w.size();) {
+        wchar_t ch = w[i], nx = i + 1 < w.size() ? w[i + 1] : 0;
+        if (ch == 'y') { if (IsV(nx)) u.push_back({ false, Cons(L"y"), false, {} }); else u.push_back({ true, Vow('y'), false, {} }); i++; continue; }
+        if (IsV(ch)) { if (nx == ch && (ch == 'e' || ch == 'o')) { u.push_back({ true, Vow(ch), true, {} }); i += 2; } else { u.push_back({ true, Vow(ch), false, {} }); i++; } continue; }
+        std::wstring two = w.substr(i, 2);
+        if (two == L"gh") { i += 2; continue; }
+        if (two.size() == 2 && two[0] != two[1] && Cons(two)) { u.push_back({ false, Cons(two), false, {} }); i += 2; continue; }
+        if (ch == 'c' && (nx == 'e' || nx == 'i' || nx == 'y')) { u.push_back({ false, 0xE024, false, {} }); i++; continue; }
+        if (ch == 'x') { u.push_back({ false, 0xE003, false, {} }); u.push_back({ false, 0xE024, false, {} }); i++; continue; }
+        int code = Cons(std::wstring(1, ch));
+        if (code) { if (nx == ch) { u.push_back({ false, code, false, { 0xE051 } }); i += 2; } else { u.push_back({ false, code, false, {} }); i++; } continue; }
+        i++;
+    }
+    if (u.size() >= 3 && u.back().vowel && u.back().code == 0xE046 && !u.back().lng && !u[u.size() - 2].vowel && w.back() == 'e') { u.pop_back(); u.back().marks.push_back(0xE045); }
+    static const std::set<int> stops = { 0xE000, 0xE001, 0xE002, 0xE003, 0xE004, 0xE005, 0xE006, 0xE007 };
+    for (size_t k = 0; k + 1 < u.size();) {
+        if (!u[k].vowel && (u[k].code == 0xE010 || u[k].code == 0xE011) && u[k].marks.empty() && !u[k + 1].vowel && stops.count(u[k + 1].code)) { u[k + 1].marks.push_back(0xE050); u.erase(u.begin() + k); continue; }
+        k++;
+    }
+    for (size_t k = 0; k + 1 < u.size(); k++) if (!u[k].vowel && u[k].code == 0xE014 && u[k + 1].vowel) u[k].code = 0xE020;
+    for (size_t k = 0; k < u.size();) {
+        auto& x = u[k];
+        if (x.vowel) {
+            int tehta = (x.lng && x.code == 0xE046) ? 0xE048 : x.code;
+            if (k + 1 < u.size() && !u[k + 1].vowel && !x.lng) {
+                auto& n = u[k + 1];
+                int code = n.code == 0xE024 ? 0xE025 : n.code == 0xE026 ? 0xE027 : n.code;
+                out += (wchar_t)code; out += (wchar_t)tehta; for (int m : n.marks) out += (wchar_t)m;
+                k += 2; continue;
+            }
+            out += (wchar_t)(x.lng ? 0xE02C : 0xE02E); out += (wchar_t)tehta; k++; continue;
+        }
+        out += (wchar_t)x.code; for (int m : x.marks) out += (wchar_t)m; k++;
+    }
+    return out;
+}
+static std::wstring Text(const std::wstring& s) {
+    std::wstring out, tok;
+    auto flush = [&]() { if (!tok.empty()) { out += Word(tok); tok.clear(); } };
+    for (wchar_t ch : s) {
+        bool letter = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z'), digit = ch >= '0' && ch <= '9';
+        if ((letter || digit) && !tok.empty() && (iswdigit(tok.back()) != 0) != digit) flush();
+        if (letter || digit) { tok += ch; continue; }
+        flush();
+        out += ch == ':' ? (wchar_t)0xE061 : ch == ',' ? (wchar_t)0xE060 : ch;
+    }
+    flush();
+    return out;
+}
+}  // namespace Tengwar
+
 // ------------------------------------------------------------------------------------ scene elements
 // Everything is in the scenes' 1920x1080 artboard units. Each element knows where it is at time t
 // (for dirty rectangles) and how to draw itself.
@@ -568,6 +709,7 @@ struct Shooting : Element {
     void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
         float o; D2D1_MATRIX_3X2_F m;
         if (!State(t, o, m)) return;
+        if (o > .5f) Deed("meteor");
         gCtx->SetTransform(m * art);
         tail->SetOpacity(o);
         gCtx->FillRectangle(RectF(1100, 110, 1250, 112), tail.Get());
@@ -606,6 +748,8 @@ struct Moon : Element {  // tonight's real phase, lit on the right side for your
         gCtx->SetTransform((flip ? Matrix3x2F(-1, 0, 0, 1, 2 * cx, 0) : Matrix3x2F::Identity()) * art);
         Solid(0xFFF3D6, 1);
         gCtx->FillGeometry(lit.Get(), gBrush.Get());
+        if (gEclipse > .3) Deed("eclipse");
+        if (gSuperMoon) Deed("supermoon");
         if (gEclipse > 0) { gCtx->SetTransform(art); Solid(0x9A3A22, .92f * (float)gEclipse); gCtx->FillEllipse(Ellipse(Point2F(cx, cy), r, r), gBrush.Get()); }   // the blood-red moon
     }
 };
@@ -935,6 +1079,7 @@ struct Visitor : Element {
     D2D1_RECT_F Bounds(double t) override { float x, y, o; if (!At(t, x, y, o)) return Empty(); return RectF(x - 40, y - 40, x + 40, y + 30); }
     void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
         float x, y, o; if (!At(t, x, y, o)) return;
+        Deed(kind == 0 ? "fox" : kind == 1 ? "boat" : "owl");
         gCtx->SetTransform(Matrix3x2F::Translation(x, y) * art);
         if (kind == 0) {
             Solid(0xD9733A, 1); gCtx->FillGeometry(body.Get(), gBrush.Get());
@@ -959,6 +1104,135 @@ struct Visitor : Element {
 
 // ------------------------------------------------------------------------------------ scenes
 enum SceneId { NONE = -1, SHIRE, REDBOOK, STARLIT, ELVEN, LORIEN, HAVENS };
+
+// While music plays, fireflies pulse with it: the loudness of what's playing (Windows' own level
+// meter for the speakers; no microphone, nothing recorded), smoothed, sets how brightly they glow.
+// (the level meter's interface, which the MinGW headers only name)
+struct MeterInfo : public IUnknown {
+    virtual HRESULT STDMETHODCALLTYPE GetPeakValue(float* peak) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetMeteringChannelCount(UINT* count) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetChannelsPeakValues(UINT32 count, float* peaks) = 0;
+    virtual HRESULT STDMETHODCALLTYPE QueryHardwareSupport(DWORD* mask) = 0;
+};
+__CRT_UUID_DECL(MeterInfo, 0xC02216F6, 0x8C67, 0x4B5B, 0x9D, 0x00, 0xD0, 0x08, 0xE7, 0x3E, 0x00, 0x64)
+static ComPtr<MeterInfo> gMeter;
+static bool gFirefliesOn = true;   // the setting (read with the others)
+static float gMusic = 0;        // smoothed level 0..1
+static ULONGLONG gMusicAt = 0;  // when sound was last heard
+static void ReadMusic() {
+    static ULONGLONG tried = 0;
+    ULONGLONG now = GetTickCount64();
+    if (!gMeter && now - tried > 30000) {
+        tried = now;
+        ComPtr<IMMDeviceEnumerator> en; ComPtr<IMMDevice> dev;
+        if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&en))) &&
+            SUCCEEDED(en->GetDefaultAudioEndpoint(eRender, eConsole, &dev)))
+            dev->Activate(__uuidof(MeterInfo), CLSCTX_ALL, nullptr, (void**)gMeter.GetAddressOf());
+    }
+    float peak = 0;
+    if (gMeter && FAILED(gMeter->GetPeakValue(&peak))) { gMeter.Reset(); peak = 0; }   // the speakers changed: find them again
+    if (peak > .02f) gMusicAt = now;
+    gMusic += ((peak > gMusic) ? .5f : .12f) * (peak - gMusic);
+}
+static bool MusicOn() { return gFirefliesOn && GetTickCount64() - gMusicAt < 2500; }
+
+struct Fireflies : Element {
+    struct F { float x, y, a, b, g; };
+    std::vector<F> f;
+    uint32_t col;
+    explicit Fireflies(SceneId id) {
+        smooth = true;
+        col = id == LORIEN ? 0xFFE08A : id == SHIRE ? 0xFFF6CC : id == REDBOOK ? 0xFFC56A : (id == HAVENS || id == ELVEN) ? 0xE6F6D8 : 0xE8F59A;
+        Rng r(1966);
+        for (int i = 0; i < 22; i++) f.push_back({ frand10(ART_L + r() * (ART_R - ART_L)), frand10(640 + r() * 330), frand10(r() * 6.28), frand10(r() * 6.28), (float)(i % 3) });
+    }
+    D2D1_RECT_F Bounds(double) override { return MusicOn() ? RectF(ART_L - 60, 580, ART_R + 60, 1030) : Empty(); }
+    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
+        if (!MusicOn()) return;
+        gCtx->SetTransform(art);
+        float lvl = std::min(1.f, gMusic * 1.6f);
+        for (auto& x : f) {
+            float px = x.x + 50 * std::sin((float)t * .31f + x.a), py = x.y + 30 * std::sin((float)t * .23f + x.b);
+            // the level, and a gentle turn-taking between three groups so they don't all flash at once
+            float k = .12f + .88f * lvl * (.55f + .45f * std::cos((float)t * 2.2f + x.g * 2.09f));
+            Solid(col, .28f * k); gCtx->FillEllipse(Ellipse(Point2F(px, py), 11, 11), gBrush.Get());
+            Solid(col, k); gCtx->FillEllipse(Ellipse(Point2F(px, py), 2.6f, 2.6f), gBrush.Get());
+        }
+    }
+};
+
+// The hidden phrases: type "mellon" or "ash nazg" with today's panel open. An Elven door draws
+// itself in silver and opens on warm light; or the screen darkens while fire-letters kindle around a
+// gold ring. Six seconds, then gone. (Drawn for Lembas: the letters belong to no real alphabet.)
+static int gWonder = -1;            // 0 the door, 1 the ring
+static ULONGLONG gWonderAt = 0;
+static const float kWonderLen = 6000;
+struct Wonder : Element {
+    ComPtr<ID2D1PathGeometry> arch, trees, star, glyphs;
+    Wonder() {
+        smooth = true;
+        arch = Path("M760,900 L760,420 C760,250 1160,250 1160,420 L1160,900");
+        trees = Path("M832,900 L832,470 M832,560 C820,540 808,520 800,500 M832,660 C820,640 808,620 800,600 M832,760 C820,740 808,720 800,700 "
+                     "M1088,900 L1088,470 M1088,560 C1100,540 1112,520 1120,500 M1088,660 C1100,640 1112,620 1120,600 M1088,760 C1100,740 1112,720 1120,700");
+        std::string st = "M960,322";
+        for (int k = 1; k <= 16; k++) { float a = k * 3.14159f / 8 - 1.5708f, r = k % 2 ? 11.f : 30.f; char b[48]; std::snprintf(b, 48, " L%.1f,%.1f", 960 + std::cos(a) * r, 352 + std::sin(a) * r); st += b; }
+        star = Path((st + " Z").c_str());
+        std::string g;
+        Rng r(1954);
+        for (int i = 0; i < 34; i++) {   // script-like strokes around the band
+            float a = i / 34.f * 6.2832f + 1.5708f, x = 960 + std::cos(a) * 330, y = 520 + std::sin(a) * 140;
+            float s = 1.1f; char b[200];
+            switch ((int)(r() * 3)) {
+            case 0: std::snprintf(b, 200, "M%.1f,%.1f C%.1f,%.1f %.1f,%.1f %.1f,%.1f M%.1f,%.1f L%.1f,%.1f ", x, y - 6 * s, x + 6 * s, y - 10 * s, x + 8 * s, y + 2 * s, x, y + 4 * s, x, y - 10 * s, x, y + 10 * s); break;
+            case 1: std::snprintf(b, 200, "M%.1f,%.1f C%.1f,%.1f %.1f,%.1f %.1f,%.1f ", x - 4 * s, y - 8 * s, x + 6 * s, y - 8 * s, x + 6 * s, y + 6 * s, x - 2 * s, y + 6 * s); break;
+            default: std::snprintf(b, 200, "M%.1f,%.1f L%.1f,%.1f M%.1f,%.1f C%.1f,%.1f %.1f,%.1f %.1f,%.1f ", x - 3 * s, y + 8 * s, x, y - 10 * s, x - 5 * s, y - 2 * s, x - 1 * s, y - 5 * s, x + 3 * s, y - 5 * s, x + 6 * s, y);
+            }
+            g += b;
+        }
+        glyphs = Path(g.c_str());
+    }
+    static float P() { return gWonder < 0 ? -1 : (GetTickCount64() - gWonderAt) / kWonderLen; }
+    D2D1_RECT_F Bounds(double) override { float p = P(); if (p < 0 || p > 1.1f) { if (p > 1.1f) gWonder = -1; return Empty(); } return RectF(ART_L - 200, -200, ART_R + 200, 1300); }
+    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
+        float p = P(); if (p < 0 || p > 1.1f) return;
+        float a = std::min(1.f, std::min(p * 6, (1.1f - p) * 6));
+        gCtx->SetTransform(art);
+        Solid(gWonder == 0 ? 0x070A14 : 0x050203, .9f * a);
+        gCtx->FillRectangle(RectF(ART_L - 200, -200, ART_R + 200, 1300), gBrush.Get());
+        if (gWonder == 0) {
+            float open = std::clamp((p - .45f) / .35f, 0.f, 1.f);
+            if (open > 0) { Solid(0xFFD98A, .55f * a * open); gCtx->FillRectangle(RectF(760 + 200 * (1 - open), 330, 1160 - 200 * (1 - open), 900), gBrush.Get()); }
+            float draw = std::clamp(p / .4f, 0.f, 1.f);
+            Solid(0xCFE0FF, .3f * a * draw); gCtx->DrawGeometry(arch.Get(), gBrush.Get(), 12, Glint::gRound.Get());
+            Solid(0xF2F6FF, a * draw); gCtx->DrawGeometry(arch.Get(), gBrush.Get(), 3, Glint::gRound.Get());
+            float tr = std::clamp((p - .15f) / .3f, 0.f, 1.f);
+            Solid(0xF2F6FF, a * tr); gCtx->DrawGeometry(trees.Get(), gBrush.Get(), 2.4f, Glint::gRound.Get());
+            Solid(0xF2F6FF, a * std::clamp((p - .4f) * 6, 0.f, 1.f)); gCtx->FillGeometry(star.Get(), gBrush.Get());
+            if (gDWrite && p > .25f) DrawWords(L"Mellon", L"friend, and the doors open", 0xF2F6FF, a * std::clamp((p - .25f) * 5, 0.f, 1.f), 960);
+        } else {
+            for (int i = 0; i < 3; i++) { Solid(0xD9A43A, (i == 1 ? 1.f : .45f) * a); gCtx->DrawEllipse(Ellipse(Point2F(960, 520), 330.f + (i - 1) * 9, 140.f + (i - 1) * 6), gBrush.Get(), i == 1 ? 26.f : 4.f); }
+            Solid(0xFFF6D8, .6f * a); gCtx->DrawEllipse(Ellipse(Point2F(960, 512), 322, 132), gBrush.Get(), 3);
+            float flick = .75f + .25f * std::sin((float)t * 9);
+            float lit = std::clamp(p / .5f, 0.f, 1.f);
+            Solid(0xFF6A1A, .45f * a * lit * flick); gCtx->DrawGeometry(glyphs.Get(), gBrush.Get(), 6, Glint::gRound.Get());
+            Solid(0xFFE08A, a * lit * flick); gCtx->DrawGeometry(glyphs.Get(), gBrush.Get(), 2, Glint::gRound.Get());
+            if (gDWrite && p > .6f) DrawWords(L"", L"Best put it away again.", 0xE8B66A, a * std::clamp((p - .6f) * 5, 0.f, 1.f), 960);
+        }
+    }
+    static void DrawWords(const wchar_t* big, const wchar_t* small, uint32_t col, float o, float cx) {
+        auto one = [&](const wchar_t* s, float size, float y) {
+            if (!*s) return;
+            ComPtr<IDWriteTextFormat> f;
+            gDWrite->CreateTextFormat(L"Cormorant Garamond", gFonts.Get(), DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_FONT_STYLE_ITALIC, DWRITE_FONT_STRETCH_NORMAL, size, L"en", &f);
+            if (!f) return;
+            f->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            Solid(col, o);
+            gCtx->DrawTextW(s, (UINT32)wcslen(s), f.Get(), RectF(cx - 600, y, cx + 600, y + size * 1.5f), gBrush.Get());
+        };
+        one(big, 64, 930); one(small, 34, big[0] ? 1006 : 760);
+    }
+};
+
 static const wchar_t* kSceneKey[] = { L"shire", L"redbook", L"starlit", L"elven", L"lorien", L"havens" };
 static const wchar_t* kWallName[] = { L"Lembas - Shire Morning.jpg", L"Lembas - Red Book.jpg", L"Lembas - Starlit Night.jpg", L"Lembas - Elven Silver.jpg", L"Lembas - Lothlorien.jpg", L"Lembas - The Grey Havens.jpg" };
 static const wchar_t* kLayerName[] = { L"back", L"mid", L"front" };
@@ -1093,6 +1367,14 @@ static void AddSky(std::vector<Element*>& E, SceneId id) {
     }
     bool fireworks, lanterns, durin;
     FeastFlags(fireworks, lanterns, durin);
+    if (gSky.rainbow && (id == SHIRE || id == LORIEN)) Deed("rainbow");
+    if (gSky.storm && outdoors) Deed("storm");
+    if (gSky.beacons && outdoors) Deed("beacons");
+    if (gSky.frost && outdoors) Deed("frost");
+    if (fireworks) Deed("fireworks");
+    if (lanterns) Deed("lanterns");
+    if (durin && id == REDBOOK) Deed("durin");
+    if (gSeasonTurn) Deed("turning");
     if (lanterns) E.push_back(new Lanterns());
     if (durin && id == REDBOOK) E.push_back(new MoonLetters());
     if (fireworks) for (int k = 0; k < 3; k++) E.push_back(new Firework(k));
@@ -1232,6 +1514,8 @@ static Scene* BuildScene(SceneId id) {
     if (id == SHIRE) E.push_back(new Visitor(0));
     if (id == STARLIT) E.push_back(new Visitor(1));
     if (id == ELVEN) E.push_back(new Visitor(2));
+    E.push_back(new Fireflies(id));
+    E.push_back(new Wonder());
     if (id != REDBOOK) E.push_back(new Light());
     return s;
 }
@@ -1259,7 +1543,7 @@ static void ReleaseShared() {
 }
 
 // ------------------------------------------------------------------------------------ settings
-struct Settings { bool clock = true, meals = true, enabled = true, adaptive = true, modern = true, weather = true, span = true, pinned = false; double lat = -33.87, lon = 151.21; std::wstring look = L"adaptive"; } gSet;
+struct Settings { bool clock = true, meals = true, enabled = true, adaptive = true, modern = true, weather = true, span = true, pinned = false, greeting = true, fireflies = true; int tengwar = 0; double lat = -33.87, lon = 151.21; std::wstring look = L"adaptive"; } gSet;
 
 static std::wstring ReadAll(const std::wstring& path) {
     HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
@@ -1306,6 +1590,9 @@ static void LoadSettings() {
     gSet.weather = !(JsonValue(j, L"weather", v) && v == L"false");
     gSet.span = !(JsonValue(j, L"spanScreens", v) && v == L"false");      // one view across side-by-side screens
     gSet.pinned = JsonValue(j, L"panelPinned", v) && v == L"true";        // keep today's panel on the desktop
+    gSet.greeting = !(JsonValue(j, L"greeting", v) && v == L"false");      // a Sindarin greeting under the clock
+    gSet.fireflies = gFirefliesOn = !(JsonValue(j, L"fireflies", v) && v == L"false");    // fireflies while music plays
+    gSet.tengwar = !JsonValue(j, L"tengwar", v) ? 0 : v.find(L"both") != std::wstring::npos ? 2 : v.find(L"date") != std::wstring::npos ? 1 : 0;
     gLatitude = gSet.lat; gLongitude = gSet.lon;
 }
 static SceneId gForced = NONE;  // --look <name>: for testing one look
@@ -1654,7 +1941,6 @@ static bool Use24h() {
 }
 
 // Font lookup: the Lembas fonts are installed for the user by the kit; fall back gracefully.
-static ComPtr<IDWriteFontCollection> gFonts;
 static std::wstring Family(std::initializer_list<const wchar_t*> names) {
     for (auto* n : names) {
         UINT32 i; BOOL ok = FALSE;
@@ -1718,6 +2004,7 @@ static void BuildClock(SceneId sc) {
     std::wstring time = tb, shireTxt = sd ? std::to_wstring(sd) + L" " + sname : sname;
     std::wstring greg = LongDateNoYear(st) + (occ.empty() ? L"" : L" · " + occ);
     std::wstring meal = (st.wMonth == 1 && st.wDay == 3 && h == 21) ? L"A toast: the Professor" : gSet.meals ? Meal(h) : L"";   // the Tolkien Society's toast, at 9pm
+    if (st.wMonth == 1 && st.wDay == 3 && h == 21) Deed("toast");
 
     std::wstring garamond = Family({ L"Cormorant Garamond", L"Cormorant Garamond Light" });
     std::wstring cinzel = Family({ L"Cinzel" });
@@ -1814,6 +2101,32 @@ static void BuildClock(SceneId sc) {
         lab.text = Upper(q + L" · " + en); shi.text = wd + L", " + shireTxt;
     }
     if (!gSet.modern && mea.text.empty()) L.pop_back();
+
+    // Tengwar, when chosen (Small touches): the date in Elvish letters, and the numerals too
+    std::wstring tengwarFam = Family({ L"Alcarin Tengwar" });
+    if (gSet.tengwar > 0 && tengwarFam != L"Georgia") {
+        static const wchar_t* days[] = { L"Sunday", L"Monday", L"Tuesday", L"Wednesday", L"Thursday", L"Friday", L"Saturday" };
+        static const wchar_t* months[] = { L"January", L"February", L"March", L"April", L"May", L"June", L"July", L"August", L"September", L"October", L"November", L"December" };
+        Line& dl = gSet.modern ? L.back() : L[3];
+        dl.text = Tengwar::Text(std::wstring(days[st.wDayOfWeek]) + L" " + std::to_wstring(st.wDay) + L" " + months[st.wMonth - 1]);
+        dl.family = tengwarFam; dl.weight = DWRITE_FONT_WEIGHT_NORMAL; dl.style = DWRITE_FONT_STYLE_NORMAL; dl.spacing = 0; dl.size *= 1.25f;
+        if (gSet.tengwar > 1) {
+            Line& tl = L[1];
+            std::wstring digits = ampm.empty() ? tl.text : time;
+            tl.text = Tengwar::Text(digits) + (ampm.empty() ? L"" : ampm);
+            if (!ampm.empty()) time = Tengwar::Text(time);
+            tl.family = tengwarFam; tl.weight = tl.weight2 = DWRITE_FONT_WEIGHT_NORMAL; tl.spacing = 0; tl.size *= .9f;
+        }
+    }
+    // a Sindarin greeting for the hour, English after it
+    if (gSet.greeting) {
+        std::wstring el, en; Greeting(h, el, en);
+        Line g; g.family = garamond; g.style = DWRITE_FONT_STYLE_ITALIC;
+        g.size = gSet.modern ? 2.4f : 2.3f; g.margin = .8f;
+        g.color = (gSet.modern ? L.back() : L[3]).color;
+        g.text = el + L" \u00B7 " + en;
+        L.push_back(g);
+    }
 
     // lay the lines out top to bottom, like the scene's CSS column (gap .4vh)
     struct Placed { ComPtr<IDWriteTextLayout> lay; float x, y, w, h; const Line* l; };
@@ -2056,6 +2369,7 @@ static bool Render(bool animate, bool clockChanged, const D2D1_RECT_F& oldClock)
     if (!gSwap || !gScene) return true;
     double t = Now() - gT0;
     bool full = gFullFrames > 0;
+    if (animate && gSet.fireflies) ReadMusic();   // one cheap look at the speakers' level a frame
     std::vector<RECT> cur;
     std::vector<Element*> moved;
     for (auto* e : gScene->els) {
@@ -2361,10 +2675,13 @@ static void RunScript(const wchar_t* script, const std::wstring& args, bool visi
     ShellExecuteW(nullptr, L"open", exe.c_str(), a.c_str(), nullptr, visible ? SW_SHOWNORMAL : SW_HIDE);
 }
 
+static bool gPanelDeeds = false;   // the next popup shows the Deeds instead of today
+static void ShowPanel(POINT at);
 enum { IDM_ADAPTIVE = 100, IDM_SHIRE, IDM_REDBOOK, IDM_STARLIT, IDM_ELVEN, IDM_LORIEN, IDM_HAVENS,
        IDM_MODERN = 200, IDM_CLASSIC, IDM_NOCLOCK, IDM_SCENE, IDM_MEALS, IDM_WEATHER,
        IDM_SPAN, IDM_PIN, IDM_PAUSE, IDM_SAVER,
-       IDM_PREVIEW = 300, IDM_UPDATE, IDM_UNINSTALL, IDM_SYNC, IDM_PLACE };
+       IDM_PREVIEW = 300, IDM_UPDATE, IDM_UNINSTALL, IDM_SYNC, IDM_PLACE,
+       IDM_GREETING = 400, IDM_TENGWAR_OFF, IDM_TENGWAR_DATE, IDM_TENGWAR_BOTH, IDM_FIREFLIES, IDM_DEEDS };
 
 // Lembas as the screensaver (the scene and the clock, full screen): set or cleared in your Windows settings.
 static std::wstring SaverPath() { return LembasDir() + L"\\Living\\Lembas.scr"; }
@@ -2425,6 +2742,16 @@ static void TrayMenu() {
     AppendMenuW(m, MF_STRING | check(gSet.pinned), IDM_PIN, L"Keep today's panel on the desktop");
     if (gMons.size() > 1) AppendMenuW(m, MF_STRING | check(gSet.span), IDM_SPAN, L"One view across your screens");
     AppendMenuW(m, MF_STRING | check(SaverOn()), IDM_SAVER, L"Lembas as the screensaver");
+    HMENU touches = CreatePopupMenu(), tengwar = CreatePopupMenu();
+    AppendMenuW(touches, MF_STRING | check(gSet.greeting), IDM_GREETING, L"Elvish greeting under the clock");
+    AppendMenuW(tengwar, MF_STRING | check(gSet.tengwar == 0), IDM_TENGWAR_OFF, L"Off");
+    AppendMenuW(tengwar, MF_STRING | check(gSet.tengwar == 1), IDM_TENGWAR_DATE, L"On the date");
+    AppendMenuW(tengwar, MF_STRING | check(gSet.tengwar == 2), IDM_TENGWAR_BOTH, L"On the date and clock");
+    AppendMenuW(touches, MF_POPUP, (UINT_PTR)tengwar, L"Tengwar");
+    AppendMenuW(touches, MF_STRING | check(gSet.fireflies), IDM_FIREFLIES, L"Fireflies to the music");
+    AppendMenuW(touches, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(touches, MF_STRING, IDM_DEEDS, L"Deeds of the Red Book...");
+    AppendMenuW(m, MF_POPUP, (UINT_PTR)touches, L"Small touches");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     bool synced = SyncSignedIn();
     AppendMenuW(m, MF_STRING | check(synced), IDM_SYNC, synced ? L"Sync with your phone (on)" : L"Sync with your phone...");
@@ -2458,6 +2785,12 @@ static void TrayMenu() {
     case IDM_PIN: SetConfig(L"panelPinned", gSet.pinned ? L"false" : L"true"); break;
     case IDM_SPAN: SetConfig(L"spanScreens", gSet.span ? L"false" : L"true"); gReattach = true; break;
     case IDM_SAVER: SetSaver(!SaverOn()); break;
+    case IDM_GREETING: SetConfig(L"greeting", gSet.greeting ? L"false" : L"true"); break;
+    case IDM_TENGWAR_OFF: SetConfig(L"tengwar", L"\"off\""); break;
+    case IDM_TENGWAR_DATE: SetConfig(L"tengwar", L"\"date\""); break;
+    case IDM_TENGWAR_BOTH: SetConfig(L"tengwar", L"\"both\""); break;
+    case IDM_FIREFLIES: SetConfig(L"fireflies", gSet.fireflies ? L"false" : L"true"); break;
+    case IDM_DEEDS: { POINT at; GetCursorPos(&at); gPanelDeeds = true; ShowPanel(at); break; }
     case IDM_PREVIEW: RunScript(L"Preview-Lembas.ps1", L"", true); break;
     case IDM_UPDATE: RunScript(L"Update-Lembas.ps1", L"", true); break;
     case IDM_PLACE: RunScript(L"Lembas-Location.ps1", L"", false); break;
@@ -2469,7 +2802,7 @@ static void TrayMenu() {
         break;
     }
     if (cmd >= IDM_MODERN && cmd < IDM_PREVIEW && SyncSignedIn()) RunScript(L"Lembas-Sync.ps1", L"-Quiet", false);   // tell your other devices
-    if (cmd >= IDM_MODERN && cmd < IDM_PREVIEW) {   // settings changed: apply them now
+    if ((cmd >= IDM_MODERN && cmd < IDM_PREVIEW) || (cmd >= IDM_GREETING && cmd < IDM_DEEDS)) {   // settings changed: apply them now
         LoadSettings();
         gClockMinute = -1;
         gReload = true;
@@ -2569,6 +2902,12 @@ static void PanelContent(SceneId sc) {
     add(L"Sunrise " + HourMinute(d.rise) + L"  ·  Sunset " + HourMinute(d.set), L"", alegreya, 14, 1, 6);
     if (!gForecast.empty()) add(gForecast, L"", garamond, 16, 1, 4, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_ITALIC);   // the day's weather, hobbit-fashion
     add(FeastCountdown(), L"", garamond, 16, 2, 4, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_ITALIC);
+    // the walk to Mount Doom (from your phone, through sync)
+    {
+        wchar_t base[MAX_PATH]; GetEnvironmentVariableW(L"LOCALAPPDATA", base, MAX_PATH);
+        std::wstring j = ReadAll(std::wstring(base) + L"\\Lembas\\walk.json"), v;
+        if (JsonValue(j, L"line", v) && v.size() > 2 && v.front() == L'"') add(v.substr(1, v.size() - 2), L"", garamond, 16, 2, 4, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_ITALIC);
+    }
     if (gSet.adaptive && gForced == NONE) {
         int m = st.wHour * 60 + st.wMinute;
         struct B { int at; SceneId to; } bs[] = { { d.rise, SHIRE }, { d.evening, SeasonNow() == 2 ? LORIEN : REDBOOK }, { d.set, STARLIT }, { 23 * 60, ELVEN }, { 2 * 60, HAVENS } };
@@ -2589,7 +2928,43 @@ static void PanelContent(SceneId sc) {
         add(i == 0 ? L"Today" : DateFmt(dd, L"ddd d MMM"), std::wstring(kWeek[dd.wDayOfWeek]) + L" · " + (sdd ? std::to_wstring(sdd) + L" " : L"") + sn,
             alegreya, 14, i == 0 ? 1 : 3, i == 0 ? 6 : 4);
     }
+    // today's saying, from the Red Book
+    add(L"FROM THE RED BOOK", L"", alegreya, 11, 2, 16);
+    add(SayingToday(), L"", garamond, 17, 1, 6, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_ITALIC);
+    LoadDeeds();
+    int seen = 0; for (auto& d : kDeeds) seen += gDeeds.count(d.id) ? 1 : 0;
+    add(L"Deeds: " + std::to_wstring(seen) + L" of " + std::to_wstring(sizeof kDeeds / sizeof kDeeds[0]) + L" seen on this PC (Lembas menu \u203A Deeds)", L"", alegreya, 12, 3, 4);
     add(L"Click anywhere else to close", L"", alegreya, 11, 3, 14);
+}
+
+// The Deeds of the Red Book, in the panel: what you've seen on this PC, newest first, then hints.
+static void DeedsContent(SceneId sc) {
+    PanelContent(sc);   // for the colours
+    gPanelLines.clear();
+    std::wstring fraunces = Family({ L"Fraunces", L"Fraunces Light" }), alegreya = Family({ L"Alegreya Sans Medium", L"Alegreya Sans" });
+    std::wstring garamond = Family({ L"Cormorant Garamond", L"Cormorant Garamond Light" });
+    auto add = [&](std::wstring l, std::wstring r, const std::wstring& fam, float size, int color, float gap,
+                   DWRITE_FONT_WEIGHT w = DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_FONT_STYLE st = DWRITE_FONT_STYLE_NORMAL) {
+        gPanelLines.push_back({ l, r, fam, size, w, st, color, gap });
+    };
+    LoadDeeds();
+    std::vector<const DeedInfo*> seen, unseen;
+    for (auto& d : kDeeds) (gDeeds.count(d.id) ? seen : unseen).push_back(&d);
+    std::sort(seen.begin(), seen.end(), [](const DeedInfo* a, const DeedInfo* b) { return gDeeds[a->id].first > gDeeds[b->id].first; });
+    add(L"Deeds of the Red Book", L"", fraunces, 22, 1, 0, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+    add(std::to_wstring(seen.size()) + L" of " + std::to_wstring(seen.size() + unseen.size()) + L" seen on this PC", L"", alegreya, 13, 3, 2);
+    if (!seen.empty()) add(L"SEEN", L"", alegreya, 11, 2, 16);
+    for (auto* d : seen) {
+        auto& r = gDeeds[d->id];
+        SYSTEMTIME day = {}; { long z = r.first + 719468, era = z / 146097; unsigned doe = (unsigned)(z - era * 146097), yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+            unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153; day.wDay = (WORD)(doy - (153 * mp + 2) / 5 + 1);
+            day.wMonth = (WORD)(mp < 10 ? mp + 3 : mp - 9); day.wYear = (WORD)(yoe + era * 400 + (day.wMonth <= 2)); }
+        add(d->name, L"", garamond, 18, 1, 8, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_ITALIC);
+        add(std::wstring(d->line) + L"  \u00B7  first seen " + DateFmt(day, L"d MMMM yyyy") + (r.count > 1 ? L", " + std::to_wstring(r.count) + L" times" : L""), L"", alegreya, 12, 3, 1);
+    }
+    if (!unseen.empty()) add(L"STILL TO FIND", L"", alegreya, 11, 2, 16);
+    for (auto* d : unseen) add(L"\u00B7 \u00B7 \u00B7   " + std::wstring(d->hint), L"", alegreya, 13, 3, 5);
+    add(L"Kept on this PC only. Click anywhere else to close", L"", alegreya, 11, 3, 14);
 }
 
 static float PanelScale() { return GetDpiForWindow(gPanel ? gPanel : gMsgWnd) / 96.f; }
@@ -2647,6 +3022,16 @@ static LRESULT CALLBACK PanelProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case WM_PAINT: { PAINTSTRUCT ps; BeginPaint(h, &ps); PaintPanel(); EndPaint(h, &ps); return 0; }
     case WM_ACTIVATE: if (LOWORD(w) == WA_INACTIVE) DestroyWindow(h); return 0;
     case WM_KEYDOWN: if (w == VK_ESCAPE) DestroyWindow(h); return 0;
+    case WM_CHAR: {   // the hidden phrases, typed while the panel is open
+        static std::wstring typed;
+        wchar_t c = (wchar_t)towlower((wchar_t)w);
+        if (c < 'a' || c > 'z') return 0;
+        typed = (typed + c).substr(typed.size() + 1 > 10 ? typed.size() + 1 - 10 : 0);
+        int which = typed.size() >= 6 && typed.compare(typed.size() - 6, 6, L"mellon") == 0 ? 0
+                  : typed.size() >= 7 && typed.compare(typed.size() - 7, 7, L"ashnazg") == 0 ? 1 : -1;
+        if (which >= 0) { typed.clear(); gWonder = which; gWonderAt = GetTickCount64(); Deed(which == 0 ? "mellon" : "ring"); DestroyWindow(h); }
+        return 0;
+    }
     case WM_LBUTTONUP: DestroyWindow(h); return 0;
     case WM_DESTROY: gPanel = nullptr; gPanelRT.Reset(); return 0;
     }
@@ -2654,10 +3039,12 @@ static LRESULT CALLBACK PanelProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 }
 static bool gPanelChild = false;   // the panel is pinned to the desktop (part of it, not a popup)
 static void ShowPanel(POINT at) {
-    if (gPanelChild) return;           // pinned: it's already there
-    if (gPanel) { DestroyWindow(gPanel); return; }
-    if (OnDesktopIcon(at)) return;
-    PanelContent(gWanted);
+    if (gPanelChild && !gPanelDeeds) return;           // pinned: it's already there
+    if (gPanelChild && gPanel) { DestroyWindow(gPanel); gPanelChild = false; }   // the Deeds over a pinned panel: it comes back after
+    else if (gPanel) { DestroyWindow(gPanel); if (!gPanelDeeds) return; }
+    if (!gPanelDeeds && OnDesktopIcon(at)) return;
+    if (gPanelDeeds) DeedsContent(gWanted); else PanelContent(gWanted);
+    gPanelDeeds = false;
     static bool registered = false;
     if (!registered) {
         WNDCLASSW wc = {};
@@ -2690,7 +3077,7 @@ static void ShowPanel(POINT at) {
 static void PinPanel() {
     bool want = gSet.pinned && gSet.clock && gAttached && gClock.bmp && IsWindow(gParent);
     if (!want) { if (gPanelChild && gPanel) DestroyWindow(gPanel); gPanelChild = false; return; }
-    if (gPanel && !gPanelChild) DestroyWindow(gPanel);   // a popup was open: swap it for the pinned one
+    if (gPanel && !gPanelChild) return;                  // a popup is open: pin again once it's closed
     PanelContent(gWanted);
     static bool registered = false;
     if (!registered) {
