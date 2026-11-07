@@ -265,6 +265,109 @@ static void Solid(uint32_t rgb, float a) {
     gBrush->SetOpacity(1);
 }
 
+// ------------------------------------------------------------------------------------ the real sky
+// The bright stars and the planets where they really are, and the Moon's true height, phase and
+// distance (the same low-precision sums as the phone's Heavens.kt: Schlyter's Moon, JPL's planets).
+namespace Heavens {
+static const double D2R = 3.14159265358979 / 180;
+static double rev(double x) { return x - std::floor(x / 360.0) * 360.0; }
+static double sind(double x) { return std::sin(x * D2R); }
+static double cosd(double x) { return std::cos(x * D2R); }
+static double DayNow() {
+    FILETIME ft; GetSystemTimeAsFileTime(&ft);
+    double unix = ((double)(((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime) - 116444736000000000.0) / 1e7;
+    return unix / 86400.0 + 2440587.5 - 2451543.5;
+}
+struct AltAz { double alt, az; };
+static double Lst(double d, double lon) { double ms = rev(356.0470 + 0.9856002585 * d), ws = 282.9404 + 4.70935e-5 * d, ut = (d - std::floor(d)) * 24; return rev(ms + ws + 180 + ut * 15.04107 + lon); }
+static AltAz ToAltAz(double ra, double dec, double d, double lat, double lon) {
+    double ha = rev(Lst(d, lon) - ra), x = cosd(ha) * cosd(dec), y = sind(ha) * cosd(dec), z = sind(dec);
+    double xh = x * sind(lat) - z * cosd(lat), zh = x * cosd(lat) + z * sind(lat);
+    return { std::asin(std::max(-1.0, std::min(1.0, zh))) / D2R, rev(std::atan2(y, xh) / D2R + 180) };
+}
+static void EclToEq(double lon, double lat, double d, double& ra, double& dec) {
+    double e = 23.4393 - 3.563e-7 * d, x = cosd(lon) * cosd(lat), y = sind(lon) * cosd(lat), z = sind(lat);
+    double ye = y * cosd(e) - z * sind(e), ze = y * sind(e) + z * cosd(e);
+    ra = rev(std::atan2(ye, x) / D2R); dec = std::atan2(ze, std::hypot(x, ye)) / D2R;
+}
+static double SunLon(double d) {
+    double w = 282.9404 + 4.70935e-5 * d, e = 0.016709 - 1.151e-9 * d, m = rev(356.0470 + 0.9856002585 * d);
+    double ea = m + e / D2R * sind(m) * (1 + e * cosd(m)), xv = cosd(ea) - e, yv = std::sqrt(1 - e * e) * sind(ea);
+    return rev(std::atan2(yv, xv) / D2R + w);
+}
+struct MoonNow { AltAz pos; double phase, km, eclipse; bool Full() const { return std::fabs(phase - .5) < .05; } bool Super() const { return Full() && km < 360000; } };
+static MoonNow Moon(double lat, double lon) {
+    double d = DayNow();
+    double n = rev(125.1228 - 0.0529538083 * d), i = 5.1454, w = rev(318.0634 + 0.1643573223 * d), a = 60.2666, e = 0.0549, mm = rev(115.3654 + 13.0649929509 * d);
+    double ea = mm + e / D2R * sind(mm) * (1 + e * cosd(mm));
+    for (int k = 0; k < 3; k++) ea -= (ea - e / D2R * sind(ea) - mm) / (1 - e * cosd(ea));
+    double xv = a * (cosd(ea) - e), yv = a * std::sqrt(1 - e * e) * sind(ea), v = std::atan2(yv, xv) / D2R, r = std::hypot(xv, yv);
+    double xh = r * (cosd(n) * cosd(v + w) - sind(n) * sind(v + w) * cosd(i)), yh = r * (sind(n) * cosd(v + w) + cosd(n) * sind(v + w) * cosd(i)), zh = r * sind(v + w) * sind(i);
+    double lo = rev(std::atan2(yh, xh) / D2R), la = std::atan2(zh, std::hypot(xh, yh)) / D2R;
+    double ms0 = rev(356.0470 + 0.9856002585 * d), ls = rev(ms0 + 282.9404 + 4.70935e-5 * d), lm = rev(mm + w + n), dd = rev(lm - ls), f = rev(lm - n);
+    lo += -1.274 * sind(mm - 2 * dd) + 0.658 * sind(2 * dd) - 0.186 * sind(ms0) - 0.059 * sind(2 * mm - 2 * dd) - 0.057 * sind(mm - 2 * dd + ms0) + 0.053 * sind(mm + 2 * dd)
+        + 0.046 * sind(2 * dd - ms0) + 0.041 * sind(mm - ms0) - 0.035 * sind(dd) - 0.031 * sind(mm + ms0) - 0.015 * sind(2 * f - 2 * dd) + 0.011 * sind(mm - 4 * dd);
+    la += -0.173 * sind(f - 2 * dd) - 0.055 * sind(mm - f - 2 * dd) - 0.046 * sind(mm + f - 2 * dd) + 0.033 * sind(f + 2 * dd) + 0.017 * sind(2 * mm + f);
+    r += -0.58 * cosd(mm - 2 * dd) - 0.46 * cosd(2 * dd);
+    double ra, dec; EclToEq(lo, la, d, ra, dec);
+    AltAz p = ToAltAz(ra, dec, d, lat, lon); p.alt -= 0.95 * cosd(p.alt);
+    double sl = SunLon(d), dl = rev(lo - (sl + 180) + 180) - 180, sep = std::hypot(dl * cosd(la), la);
+    return { p, rev(lo - sl) / 360.0, r * 6371.0, std::max(0.0, std::min(1.0, (0.96 - sep) / 0.52)) };
+}
+struct Orbit { double a, e, i, l, p, n, da, de, di, dl, dp, dn; };
+static const Orbit kEarth = { 1.00000261, 0.01671123, -0.00001531, 100.46457166, 102.93768193, 0.0, 0.00000562, -0.00004392, -0.01294668, 35999.37244981, 0.32327364, 0.0 };
+struct PlanetDef { const wchar_t* name; uint32_t col; float size; Orbit o; };
+static const PlanetDef kPlanets[] = {
+    { L"Mercury", 0xE8DCC8, 1.6f, { 0.38709927, 0.20563593, 7.00497902, 252.25032350, 77.45779628, 48.33076593, 0.00000037, 0.00001906, -0.00594749, 149472.67411175, 0.16047689, -0.12534081 } },
+    { L"Venus", 0xFFF6E0, 3.2f, { 0.72333566, 0.00677672, 3.39467605, 181.97909950, 131.60246718, 76.67984255, 0.00000390, -0.00004107, -0.00078890, 58517.81538729, 0.00268329, -0.27769418 } },
+    { L"Mars", 0xFFB08A, 2.0f, { 1.52371034, 0.09339410, 1.84969142, -4.55343205, -23.94362959, 49.55953891, 0.00001847, 0.00007882, -0.00813131, 19140.30268499, 0.44441088, -0.29257343 } },
+    { L"Jupiter", 0xFFF0D8, 2.8f, { 5.20288700, 0.04838624, 1.30439695, 34.39644051, 14.72847983, 100.47390909, -0.00011607, -0.00013253, -0.00183714, 3034.74612775, 0.21252668, 0.20469106 } },
+    { L"Saturn", 0xF2E2B0, 2.2f, { 9.53667594, 0.05386179, 2.48599187, 49.95424423, 92.59887831, 113.66242448, -0.00125060, -0.00050991, 0.00193609, 1222.49362201, -0.41897216, -0.28867794 } },
+};
+static void Helio(const Orbit& o, double t, double out[3]) {
+    double a = o.a + o.da * t, e = o.e + o.de * t, i = o.i + o.di * t, l = o.l + o.dl * t, p = o.p + o.dp * t, n = o.n + o.dn * t;
+    double m = rev(l - p), w = p - n, ea = m + e / D2R * sind(m);
+    for (int k = 0; k < 5; k++) ea -= (ea - e / D2R * sind(ea) - m) / (1 - e * cosd(ea));
+    double xp = a * (cosd(ea) - e), yp = a * std::sqrt(1 - e * e) * sind(ea);
+    out[0] = (cosd(w) * cosd(n) - sind(w) * sind(n) * cosd(i)) * xp + (-sind(w) * cosd(n) - cosd(w) * sind(n) * cosd(i)) * yp;
+    out[1] = (cosd(w) * sind(n) + sind(w) * cosd(n) * cosd(i)) * xp + (-sind(w) * sind(n) + cosd(w) * cosd(n) * cosd(i)) * yp;
+    out[2] = sind(w) * sind(i) * xp + cosd(w) * sind(i) * yp;
+}
+static AltAz Planet(int k, double lat, double lon) {
+    double d = DayNow(), t = (d + 2451543.5 - 2451545.0) / 36525.0, e[3], h[3];
+    Helio(kEarth, t, e); Helio(kPlanets[k].o, t, h);
+    double x = h[0] - e[0], y = h[1] - e[1], z = h[2] - e[2], ra, dec;
+    EclToEq(rev(std::atan2(y, x) / D2R), std::atan2(z, std::hypot(x, y)) / D2R, d, ra, dec);
+    return ToAltAz(ra, dec, d, lat, lon);
+}
+struct StarDef { double ra, dec, mag; uint32_t col; };
+static const StarDef kStars[] = {
+    { 12.443, -63.10, 0.8, 0xD6E2FF }, { 12.795, -59.69, 1.3, 0xD6E2FF }, { 12.519, -57.11, 1.6, 0xFFB090 }, { 12.252, -58.75, 2.8, 0xF4F2EE }, { 14.660, -60.83, -0.3, 0xFFD2A6 }, { 14.064, -60.37, 0.6, 0xD6E2FF },
+    { 5.919, 7.41, 0.5, 0xFFB090 }, { 5.242, -8.20, 0.1, 0xD6E2FF }, { 5.419, 6.35, 1.6, 0xD6E2FF }, { 5.679, -1.94, 1.8, 0xD6E2FF }, { 5.604, -1.20, 1.7, 0xD6E2FF }, { 5.533, -0.30, 2.2, 0xD6E2FF }, { 5.796, -9.67, 2.1, 0xD6E2FF },
+    { 11.062, 61.75, 1.8, 0xFFD2A6 }, { 11.031, 56.38, 2.4, 0xF4F2EE }, { 11.897, 53.69, 2.4, 0xF4F2EE }, { 12.257, 57.03, 3.3, 0xF4F2EE }, { 12.900, 55.96, 1.8, 0xF4F2EE }, { 13.399, 54.93, 2.2, 0xF4F2EE }, { 13.792, 49.31, 1.9, 0xD6E2FF },
+    { 0.675, 56.54, 2.2, 0xFFD2A6 }, { 0.153, 59.15, 2.3, 0xF4F2EE }, { 0.945, 60.72, 2.2, 0xD6E2FF }, { 1.430, 60.24, 2.7, 0xF4F2EE }, { 1.907, 63.67, 3.4, 0xD6E2FF }, { 2.530, 89.26, 2.0, 0xF4F2EE },
+    { 16.490, -26.43, 1.0, 0xFFB090 }, { 17.560, -37.10, 1.6, 0xD6E2FF }, { 17.622, -43.00, 1.9, 0xF4F2EE }, { 16.006, -22.62, 2.3, 0xD6E2FF }, { 16.090, -19.81, 2.6, 0xD6E2FF },
+    { 6.752, -16.72, -1.5, 0xD6E2FF }, { 6.399, -52.70, -0.7, 0xF4F2EE }, { 14.261, 19.18, -0.1, 0xFFD2A6 }, { 18.616, 38.78, 0.0, 0xD6E2FF }, { 5.278, 46.00, 0.1, 0xFFD2A6 }, { 7.655, 5.22, 0.4, 0xF4F2EE },
+    { 1.629, -57.24, 0.5, 0xD6E2FF }, { 19.846, 8.87, 0.8, 0xF4F2EE }, { 4.599, 16.51, 0.9, 0xFFB090 }, { 13.420, -11.16, 1.0, 0xD6E2FF }, { 7.755, 28.03, 1.1, 0xFFD2A6 }, { 22.961, -29.62, 1.2, 0xF4F2EE },
+    { 20.690, 45.28, 1.3, 0xF4F2EE }, { 10.139, 11.97, 1.4, 0xD6E2FF }, { 7.577, 31.89, 1.6, 0xF4F2EE }, { 3.791, 24.11, 2.9, 0xD6E2FF }, { 16.811, -69.03, 1.9, 0xFFD2A6 }, { 20.427, -56.74, 1.9, 0xD6E2FF },
+    { 9.220, -69.72, 1.7, 0xF4F2EE }, { 8.375, -59.51, 1.9, 0xFFD2A6 }, { 22.137, -46.96, 1.7, 0xD6E2FF },
+};
+// Durin's Day: the last new moon of autumn (for your hemisphere) this year, as a day of the year, or -1.
+static int DurinsDay(int year, bool south, int& month, int& dayOut) {
+    double ref = 947182440.0, syn = 29.530588853 * 86400.0;
+    SYSTEMTIME w = {}; w.wYear = (WORD)year; w.wMonth = south ? 6 : 12; w.wDay = 1;
+    FILETIME ft; SystemTimeToFileTime(&w, &ft);
+    double winter = ((double)(((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime) - 116444736000000000.0) / 1e7;
+    double nm = ref + std::floor((winter - ref) / syn) * syn;
+    uint64_t q = (uint64_t)((nm + 11644473600.0) * 1e7);
+    FILETIME nf = { (DWORD)q, (DWORD)(q >> 32) }, lf; SYSTEMTIME st;
+    FileTimeToLocalFileTime(&nf, &lf); FileTimeToSystemTime(&lf, &st);
+    if (st.wMonth < (south ? 3 : 9)) return -1;
+    month = st.wMonth; dayOut = st.wDay;
+    return 1;
+}
+}  // namespace Heavens
+
 // ------------------------------------------------------------------------------------ scene elements
 // Everything is in the scenes' 1920x1080 artboard units. Each element knows where it is at time t
 // (for dirty rectangles) and how to draw itself.
@@ -291,7 +394,7 @@ struct LayerEl : Element {
 // The artboard: the 1920x1080 design, with 480 more on each side that wider screens show.
 static const float ART_L = -480, ART_R = 2400;
 
-static double gLatitude = 0;
+static double gLatitude = 0, gLongitude = 151.21;
 // Today's weather, from weather.json (Lembas Sun fetches it hourly when weather is on):
 // 0 clear, 1 cloudy, 2 fog, 3 rain, 4 snow, 5 storm.
 static int gWx = 0;
@@ -302,6 +405,8 @@ static bool gRescene = false;  // the season or the weather changed: rebuild the
 static uint32_t gTintCol = 0; static float gTintA = 0, gGlowA = 0;
 static float gMoonAlt = 1;     // how high tonight's moon is (0 horizon .. 1), below 0 when it has set
 static bool gFullMoon = false, gMeteors = false;
+static double gMoonPhase = 0, gEclipse = 0;   // tonight's phase (0 new, .5 full) and how deep in Earth's shadow (0..1)
+static bool gSuperMoon = false;
 // The sky's moods, from the same weather.json: a rainbow when the sun comes out after rain, frost
 // on a cold morning, a shimmer on a hot afternoon, a haze of smoke when the air is bad, beacons lit
 // for severe weather, a storm's lightning. And the day's weather in a line of hobbit talk.
@@ -469,25 +574,20 @@ struct Shooting : Element {
     }
 };
 struct Moon : Element {  // tonight's real phase, lit on the right side for your hemisphere, where it really is
-    float cx, cy, r, baseY;
+    float cx, cy, r, baseY, r0;
     static ComPtr<ID2D1RadialGradientBrush> glow;
     ComPtr<ID2D1PathGeometry> lit;
     bool flip = false;
-    int day = -1;
+    double lastPh = -1;
     float lastAlt = -9;
-    Moon(float x, float y, float rr) : cx(x), cy(y), r(rr), baseY(y) { still = true; }
+    Moon(float x, float y, float rr) : cx(x), cy(y), r(rr), baseY(y), r0(rr) { still = true; }
     void Update() {
-        SYSTEMTIME st; GetLocalTime(&st);
         float wantY = baseY + (1 - std::max(0.f, gMoonAlt)) * 330;
-        if (st.wDay == day && lit && lastAlt == gMoonAlt) return;
-        lastAlt = gMoonAlt;
-        day = st.wDay;
+        if (std::fabs(gMoonPhase - lastPh) < .002 && lit && lastAlt == gMoonAlt) return;
+        lastAlt = gMoonAlt; lastPh = gMoonPhase;
         cy = wantY;
-        r = gFullMoon ? 54 * 1.25f : 54;
-        FILETIME ft; GetSystemTimeAsFileTime(&ft);
-        double ms = ((double)(((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime) - 116444736000000000.0) / 10000.0;
-        double ph = std::fmod((ms - 947182440000.0) / 864e5 / 29.530588853, 1.0);
-        if (ph < 0) ph += 1;
+        r = r0 * (gSuperMoon ? 1.32f : gFullMoon ? 1.18f : 1.f);
+        double ph = gMoonPhase;
         float tw = r * (float)std::cos(2 * PI * ph), aw = std::max(std::fabs(tw), .5f);
         char d[256];
         std::snprintf(d, sizeof d, "M%g,%g A%g,%g 0 0 1 %g,%g A%g,%g 0 0 %d %g,%g Z", cx, cy - r, r, r, cx, cy + r, aw, r, tw >= 0 ? 0 : 1, cx, cy - r);
@@ -499,16 +599,51 @@ struct Moon : Element {  // tonight's real phase, lit on the right side for your
         Update();
         if (gMoonAlt <= 0) return;   // set: not in the sky tonight
         gCtx->SetTransform(art);
-        FillGlow(glow.Get(), cx, cy, r * 3.2f * (gFullMoon ? 1.3f : 1), r * 3.2f * (gFullMoon ? 1.3f : 1), .9f);
+        FillGlow(glow.Get(), cx, cy, r * 3.2f * (gFullMoon ? 1.3f : 1), r * 3.2f * (gFullMoon ? 1.3f : 1), .9f * (1 - .7f * (float)gEclipse));
         gCtx->SetTransform(art);
         Solid(0x2A3058, 1);
         gCtx->FillEllipse(Ellipse(Point2F(cx, cy), r, r), gBrush.Get());
         gCtx->SetTransform((flip ? Matrix3x2F(-1, 0, 0, 1, 2 * cx, 0) : Matrix3x2F::Identity()) * art);
         Solid(0xFFF3D6, 1);
         gCtx->FillGeometry(lit.Get(), gBrush.Get());
+        if (gEclipse > 0) { gCtx->SetTransform(art); Solid(0x9A3A22, .92f * (float)gEclipse); gCtx->FillEllipse(Ellipse(Point2F(cx, cy), r, r), gBrush.Get()); }   // the blood-red moon
     }
 };
 ComPtr<ID2D1RadialGradientBrush> Moon::glow;
+struct RealSky : Element {  // the bright stars and the planets where they really are (night looks), moved once a minute
+    struct Dot { float x, y, r; uint32_t col; bool planet; };
+    std::vector<Dot> dots; float top, horizon; int minute = -1;
+    RealSky(float skyTop, float hz) : top(skyTop), horizon(hz) { slow = true; rate = 1.f / 30; }
+    void Update() {
+        SYSTEMTIME st; GetLocalTime(&st);
+        int m = st.wHour * 60 + st.wMinute;
+        if (m == minute) return;
+        minute = m; dots.clear();
+        double lat = gLatitude, lon = gLongitude, az0 = lat < 0 ? 180 : 0, d = Heavens::DayNow();   // face the pole you can see
+        auto place = [&](double alt, double az, float& x, float& y) {
+            double da = std::fmod(std::fmod(az - az0, 360) + 540, 360) - 180;
+            x = (float)(960 + da * 16); y = (float)(horizon - alt * 9);
+            return alt > 2 && x > ART_L && x < ART_R && y < top && y > 0;
+        };
+        for (auto& sd : Heavens::kStars) {
+            auto p = Heavens::ToAltAz(sd.ra * 15, sd.dec, d, lat, lon); float x, y;
+            if (place(p.alt, p.az, x, y)) dots.push_back({ x, y, std::max(.9f, std::min(3.4f, (float)(2.7 - .5 * sd.mag))), sd.col, false });
+        }
+        for (int k = 0; k < 5; k++) {
+            auto p = Heavens::Planet(k, lat, lon); float x, y;
+            if (place(p.alt, p.az, x, y)) dots.push_back({ x, y, Heavens::kPlanets[k].size, Heavens::kPlanets[k].col, true });
+        }
+    }
+    D2D1_RECT_F Bounds(double) override { Update(); return RectF(ART_L, 0, ART_R, top + 8); }
+    void Draw(double, const D2D1_MATRIX_3X2_F& art) override {
+        Update();
+        gCtx->SetTransform(art);
+        for (auto& dt : dots) {
+            if (dt.planet) { Solid(dt.col, .24f); gCtx->FillEllipse(Ellipse(Point2F(dt.x, dt.y), dt.r * 2.4f, dt.r * 2.4f), gBrush.Get()); }
+            Solid(dt.col, 1); gCtx->FillEllipse(Ellipse(Point2F(dt.x, dt.y), dt.r, dt.r), gBrush.Get());
+        }
+    }
+};
 struct CabinWindow : Element {  // the cabin's lit windows, flickering now and then
     float x, y;
     CabinWindow(float x_, float y_) : x(x_), y(y_) { slow = true; rate = 10; }
@@ -846,6 +981,83 @@ struct Scene {
 };
 static Scene* gScene;
 
+// --- Middle-earth's calendar
+static void FeastFlags(bool& fireworks, bool& lanterns, bool& durin);   // (below, with the Shire calendar)
+struct Firework : Element {  // Hobbit Day: Gandalf's fireworks over the scene, clear of the clock
+    int slot;
+    explicit Firework(int s) : slot(s) { smooth = true; }
+    void Burst(double t, int& n, float& p, float& cx, float& cy, uint32_t& col) {
+        float dur = 2.6f, off = slot * .87f;
+        n = (int)std::floor((t + off) / dur); p = (float)std::fmod(t + off, (double)dur) / dur;
+        Rng r((uint32_t)(n * 7 + slot));
+        cx = 1000 + 1200 * (float)r(); cy = 150 + 330 * (float)r();
+        static const uint32_t cols[5] = { 0xFFD27A, 0x9FE6A0, 0xFF8A7A, 0xFFFFFF, 0xB9C8FF };
+        col = cols[(int)(r() * 5) % 5];
+    }
+    D2D1_RECT_F Bounds(double t) override {
+        int n; float p, cx, cy; uint32_t col; Burst(t, n, p, cx, cy, col);
+        return p < .18f ? RectF(cx - 4, cy - 4, cx + 4, cy + 230) : RectF(cx - 200, cy - 200, cx + 200, cy + 240);
+    }
+    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
+        int n; float p, cx, cy; uint32_t col; Burst(t, n, p, cx, cy, col);
+        gCtx->SetTransform(art);
+        if (p < .18f) { float k = p / .18f; Solid(0xFFF0C4, .86f); gCtx->FillEllipse(Ellipse(Point2F(cx, cy + (1 - k) * 220), 2.2f, 2.2f), gBrush.Get()); return; }
+        float k = (p - .18f) / .82f, reach = 170 * (1 - (1 - k) * (1 - k));
+        Rng r((uint32_t)(n * 13 + slot));
+        Solid(col, 1 - k);
+        for (int i = 0; i < 26; i++) {
+            float a = i / 26.f * 2 * PI + (float)r() * .2f;
+            gCtx->FillEllipse(Ellipse(Point2F(cx + std::cos(a) * reach, cy + std::sin(a) * reach + k * k * 40), 2.4f - 1.2f * k, 2.4f - 1.2f * k), gBrush.Get());
+        }
+    }
+};
+struct Lanterns : Element {  // Yule and Lithe: paper lanterns strung across the sky, glowing
+    Lanterns() { slow = true; rate = 8; }
+    D2D1_RECT_F Bounds(double) override { return RectF(ART_L, 30, ART_R, 150); }
+    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
+        static const uint32_t cols[4] = { 0xFFC867, 0xFF9A6A, 0xFFE08A, 0xF2B8C6 };
+        gCtx->SetTransform(art);
+        float y0 = 60, sag = 27, w = ART_R - ART_L;
+        Solid(0xFFFFFF, .6f);
+        for (int i = 0; i < 60; i++) { float x1 = ART_L + w * i / 60, x2 = ART_L + w * (i + 1) / 60, f1 = (x1 - ART_L) / w, f2 = (x2 - ART_L) / w;
+            gCtx->DrawLine(Point2F(x1, y0 + sag * 4 * f1 * (1 - f1)), Point2F(x2, y0 + sag * 4 * f2 * (1 - f2)), gBrush.Get(), 1.2f); }
+        int n = 36;
+        for (int i = 1; i < n; i++) {
+            float x = ART_L + w * i / n, f = (x - ART_L) / w, y = y0 + sag * 4 * f * (1 - f) + 12;
+            float s = std::sin((float)t * 1.3f + i), k = .7f + .3f * s * s;
+            Solid(cols[i % 4], .24f * k); gCtx->FillEllipse(Ellipse(Point2F(x, y), 18, 18), gBrush.Get());
+            Solid(cols[i % 4], .92f * k); gCtx->FillEllipse(Ellipse(Point2F(x, y), 7, 9), gBrush.Get());
+            Solid(0x4A3A28, 1); gCtx->DrawLine(Point2F(x - 4, y - 9.5f), Point2F(x + 4, y - 9.5f), gBrush.Get(), 1.4f); gCtx->DrawLine(Point2F(x - 4, y + 9.5f), Point2F(x + 4, y + 9.5f), gBrush.Get(), 1.4f);
+        }
+    }
+};
+struct MoonLetters : Element {  // Durin's Day: moon-letters glowing silver-blue on the Red Book's page
+    std::vector<ComPtr<ID2D1PathGeometry>> runes;
+    MoonLetters() {
+        slow = true; rate = 6;
+        Rng r(1937);
+        for (int i = 0; i < 26; i++) {
+            std::string d = "M0,0 L0,22";
+            int branches = 1 + (int)(r() * 2);
+            for (int b = 0; b < branches; b++) {
+                float y = 2 + (float)r() * 14, side = r() < .5 ? 1.f : -1.f, len = 5 + (float)r() * 4, dy = r() < .5 ? 6.f : -4.f;
+                char seg[64]; std::snprintf(seg, sizeof seg, " M0,%.1f L%.1f,%.1f", y, side * len, y + dy); d += seg;
+            }
+            runes.push_back(Path(d.c_str()));
+        }
+    }
+    D2D1_RECT_F Bounds(double) override { return RectF(1040, 320, 1720, 470); }
+    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
+        float k = .45f + .3f * (.5f + .5f * std::sin((float)t * .7f));
+        for (size_t i = 0; i < runes.size(); i++) {
+            float x = 1060 + (i % 13) * 48.f, y = 330 + (i / 13) * 70.f;
+            gCtx->SetTransform(Matrix3x2F::Scale(2, 2) * Matrix3x2F::Translation(x, y) * art);
+            Solid(0xCFE6FF, .24f * k); gCtx->DrawGeometry(runes[i].Get(), gBrush.Get(), 3.4f, Glint::gRound.Get());
+            Solid(0xCFE6FF, .9f * k); gCtx->DrawGeometry(runes[i].Get(), gBrush.Get(), 1.1f, Glint::gRound.Get());
+        }
+    }
+};
+
 // Where each look's sky moods go: behind the land, on the far hills, over everything.
 static void AddSky(std::vector<Element*>& E, SceneId id) {
     auto at = [&](int layer) { for (size_t i = 0; i < E.size(); i++) if (E[i]->layer == layer) return (int)i; return -1; };
@@ -879,6 +1091,11 @@ static void AddSky(std::vector<Element*>& E, SceneId id) {
         Rng r(92);
         for (int i = 0; i < 12; i++) E.push_back(new WindowDrop(frand10(ART_L + r() * (ART_R - ART_L)), frand10(24 + r() * 32), frand10(r() * 14), frand10(4 + r() * 5)));
     }
+    bool fireworks, lanterns, durin;
+    FeastFlags(fireworks, lanterns, durin);
+    if (lanterns) E.push_back(new Lanterns());
+    if (durin && id == REDBOOK) E.push_back(new MoonLetters());
+    if (fireworks) for (int k = 0; k < 3; k++) E.push_back(new Firework(k));
     if (gSeasonTurn) {
         int sn = SeasonNow();
         Rng r(2026);
@@ -953,6 +1170,7 @@ static Scene* BuildScene(SceneId id) {
             t->dur = frand10(2 + r() * 3.5); t->off = frand10(r() * 5);
             E.push_back(t);
         }
+        E.push_back(new RealSky(430, 640));
         E.push_back(new Shooting());
         E.push_back(new Moon(1480, 230, 54));
         const float g[6][3] = { {-80, 0, 160}, {-60, 28, 120}, {-44, 58, 88}, {-30, 94, 60}, {-20, 136, 40}, {-12, 186, 24} };
@@ -964,6 +1182,7 @@ static Scene* BuildScene(SceneId id) {
     } else if (id == ELVEN) {
         Rng r(1955);
         E.push_back(new LayerEl(0));
+        E.push_back(new RealSky(470, 640));
         E.push_back(new Glow(1160, 150, 90, { {0, Hex(0xBFE3EC, .5f)}, {1, Hex(0xBFE3EC, 0)} }, 6));
         E.push_back(new Mist(640, 140));
         E.push_back(new LayerEl(1));
@@ -997,6 +1216,7 @@ static Scene* BuildScene(SceneId id) {
             t->dur = frand10(2 + r() * 3.5); t->off = frand10(r() * 5);
             E.push_back(t);
         }
+        E.push_back(new RealSky(680, 760));
         E.push_back(new Shooting());
         E.push_back(new Moon(1480, 210, 46));
         const float g[5][3] = { {-70, 14, 140}, {-50, 44, 100}, {-36, 80, 72}, {-24, 124, 48}, {-14, 176, 30} };
@@ -1086,7 +1306,7 @@ static void LoadSettings() {
     gSet.weather = !(JsonValue(j, L"weather", v) && v == L"false");
     gSet.span = !(JsonValue(j, L"spanScreens", v) && v == L"false");      // one view across side-by-side screens
     gSet.pinned = JsonValue(j, L"panelPinned", v) && v == L"true";        // keep today's panel on the desktop
-    gLatitude = gSet.lat;
+    gLatitude = gSet.lat; gLongitude = gSet.lon;
 }
 static SceneId gForced = NONE;  // --look <name>: for testing one look
 static SceneId SceneFromWallpaper() {
@@ -1153,27 +1373,32 @@ static bool UpdateLight(int scene) {
         int nearMin = std::min(std::abs(m - d.rise), std::abs(m - d.set));
         if (nearMin < 20) g = 1 - nearMin / 20.f;
     }
-    // the moon: it crosses the sky about 50 minutes later each day (with the sun at new moon, at midnight when full)
-    FILETIME ft; GetSystemTimeAsFileTime(&ft);
-    double ms = ((double)(((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime) - 116444736000000000.0) / 10000.0;
-    double ph = std::fmod((ms - 947182440000.0) / 864e5 / 29.530588853, 1.0); if (ph < 0) ph += 1;
-    double transit = d.noon + ph * 1490;
-    double hours = std::fmod((m - transit) / 60.0 + 36, 24.84) - 12.42;
-    float alt = std::min(1.f, (float)std::cos(hours / 24.84 * 2 * PI) * 1.4f - .15f);
+    // the moon, where it really is tonight: its height, phase and distance, and Earth's shadow on it
+    Heavens::MoonNow mn = Heavens::Moon(gSet.lat, gSet.lon);
+    float alt = std::min(1.f, (float)(mn.pos.alt / 60.0));
     alt = std::round(alt * 40) / 40;   // moves in small steps (a redraw each ~15 minutes)
-    bool full = ph > .46 && ph < .54;
+    bool full = mn.Full();
+    double ecl = std::round(mn.eclipse * 10) / 10;
+    bool moonChanged = std::fabs(mn.phase - gMoonPhase) > .004 || ecl != gEclipse || mn.Super() != gSuperMoon;
+    gMoonPhase = mn.phase; gEclipse = ecl; gSuperMoon = mn.Super();
     bool meteors = (st.wMonth == 8 && st.wDay >= 11 && st.wDay <= 13) || (st.wMonth == 12 && st.wDay >= 13 && st.wDay <= 15);
     a = std::round(a * 100) / 100; g = std::round(g * 20) / 20;
-    bool changed = col != gTintCol || a != gTintA || g != gGlowA || alt != gMoonAlt || full != gFullMoon;
+    bool changed = col != gTintCol || a != gTintA || g != gGlowA || alt != gMoonAlt || full != gFullMoon || moonChanged;
     gTintCol = col; gTintA = a; gGlowA = g; gMoonAlt = alt; gFullMoon = full; gMeteors = meteors;
     return changed;
+}
+
+
+static bool DurinToday() {
+    SYSTEMTIME st; GetLocalTime(&st); int m, d;
+    return Heavens::DurinsDay(st.wYear, gSet.lat < 0, m, d) > 0 && m == st.wMonth && d == st.wDay;
 }
 
 static SceneId SunScene(const SYSTEMTIME& now) {
     SunDay d = SunToday(now, gSet.lat, gSet.lon);
     int m = now.wHour * 60 + now.wMinute;
     if (m >= d.rise && m < d.evening) return SHIRE;
-    if (m >= d.evening && m < d.set) return SeasonNow() == 2 ? LORIEN : REDBOOK;   // autumn: Lothlórien
+    if (m >= d.evening && m < d.set) return SeasonNow() == 2 && !DurinToday() ? LORIEN : REDBOOK;   // autumn: Lothlórien (Durin's Day: the Red Book, its moon-letters lit)
     if (m >= 23 * 60 || m < 2 * 60) return ELVEN;
     if (m < d.rise) return HAVENS;
     return STARLIT;
@@ -1224,6 +1449,8 @@ static void CheckSun() {
     lastMinute = minute;
     if (++sinceReload >= 10) { sinceReload = 0; LoadSettings(); }  // the time zone (and so the city) may have changed
     static Sky lastSky;
+    static int lastFeast = -1;
+    { bool f1, f2, f3; FeastFlags(f1, f2, f3); int fk = f1 | (f2 << 1) | (f3 << 2); if (gScene && lastFeast >= 0 && fk != lastFeast) gRescene = true; lastFeast = fk; }
     gWx = ReadWeather();
     static bool lastWind = false;
     if (gScene && gScene->season != SeasonNow()) gSeasonTurn = true;   // a new season, while you watch
@@ -1341,6 +1568,28 @@ static void ShireDate(const SYSTEMTIME& st, int& day, std::wstring& name) {
     d -= lithe.size();
     if (d < 180) { day = (int)(d % 30) + 1; name = kMonths[6 + d / 30]; return; }
     name = L"1 Yule";
+}
+static void FeastFlags(bool& fireworks, bool& lanterns, bool& durin) {
+    SYSTEMTIME st; GetLocalTime(&st);
+    int day; std::wstring name; ShireDate(st, day, name);
+    fireworks = st.wMonth == 9 && st.wDay == 22 && st.wHour >= 18;                 // Hobbit Day, from 6pm
+    lanterns = day == 0 && (name.find(L"Yule") != std::wstring::npos || name.find(L"Lithe") != std::wstring::npos || name.find(L"year") != std::wstring::npos);
+    durin = DurinToday();
+}
+// The next of Middle-earth's dates: "Hobbit Day in 12 days", "Durin's Day tomorrow".
+static std::wstring FeastCountdown() {
+    SYSTEMTIME st; GetLocalTime(&st);
+    int64_t today = DaysFromCivil(st.wYear, st.wMonth, st.wDay), best = INT64_MAX; std::wstring bestName;
+    auto consider = [&](const wchar_t* n, int y, int m, int d) { int64_t v = DaysFromCivil(y, m, d); if (v >= today && v < best) { best = v; bestName = n; } };
+    for (int y = st.wYear; y <= st.wYear + 1; y++) {
+        consider(L"The Professor\u2019s birthday", y, 1, 3);
+        consider(L"Hobbit Day", y, 9, 22);
+        consider(L"Yule", y, 12, 21);
+        for (int d = 15; d <= 30; d++) { SYSTEMTIME s2 = {}; s2.wYear = (WORD)y; s2.wMonth = 6; s2.wDay = (WORD)d; int dd; std::wstring nm; ShireDate(s2, dd, nm); if (nm.find(L"Mid-year") == 0) { consider(L"Mid-year\u2019s Day", y, 6, d); break; } }
+        int m, d; if (Heavens::DurinsDay(y, gSet.lat < 0, m, d) > 0) consider(L"Durin\u2019s Day", y, m, d);
+    }
+    int64_t n = best - today;
+    return bestName + (n == 0 ? L" today" : n == 1 ? L" tomorrow" : L" in " + std::to_wstring(n) + L" days");
 }
 static std::wstring Ordinal(int n) {
     const wchar_t* s = L"th";
@@ -1468,7 +1717,7 @@ static void BuildClock(SceneId sc) {
     std::swprintf(tb, 16, L"%d:%02d", h24 ? h : ((h % 12) ? h % 12 : 12), st.wMinute);
     std::wstring time = tb, shireTxt = sd ? std::to_wstring(sd) + L" " + sname : sname;
     std::wstring greg = LongDateNoYear(st) + (occ.empty() ? L"" : L" · " + occ);
-    std::wstring meal = gSet.meals ? Meal(h) : L"";
+    std::wstring meal = (st.wMonth == 1 && st.wDay == 3 && h == 21) ? L"A toast: the Professor" : gSet.meals ? Meal(h) : L"";   // the Tolkien Society's toast, at 9pm
 
     std::wstring garamond = Family({ L"Cormorant Garamond", L"Cormorant Garamond Light" });
     std::wstring cinzel = Family({ L"Cinzel" });
@@ -2319,6 +2568,7 @@ static void PanelContent(SceneId sc) {
     add(L"TODAY'S SUN", L"", alegreya, 11, 2, 16);
     add(L"Sunrise " + HourMinute(d.rise) + L"  ·  Sunset " + HourMinute(d.set), L"", alegreya, 14, 1, 6);
     if (!gForecast.empty()) add(gForecast, L"", garamond, 16, 1, 4, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_ITALIC);   // the day's weather, hobbit-fashion
+    add(FeastCountdown(), L"", garamond, 16, 2, 4, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_ITALIC);
     if (gSet.adaptive && gForced == NONE) {
         int m = st.wHour * 60 + st.wMinute;
         struct B { int at; SceneId to; } bs[] = { { d.rise, SHIRE }, { d.evening, SeasonNow() == 2 ? LORIEN : REDBOOK }, { d.set, STARLIT }, { 23 * 60, ELVEN }, { 2 * 60, HAVENS } };
