@@ -368,8 +368,8 @@ struct Smoke : Element {  // a puff rising from the chimney
     }
 };
 
-// --- Red Book: the campfire on the map
-static const D2D1_MATRIX_3X2_F kFire = Matrix3x2F::Translation(1210, 930);
+// --- Red Book: the candle standing on the open book (its wax and dish are in the art; the flame moves)
+static const D2D1_MATRIX_3X2_F kFire = Matrix3x2F::Scale(.52f, .52f) * Matrix3x2F::Translation(1210, 816);
 struct Flame : Element {
     ComPtr<ID2D1PathGeometry> g; float dur, off; uint32_t col; D2D1_POINT_2F origin; D2D1_RECT_F local;
     Track sx{ {0, .25f, .5f, .75f, 1}, {1, .94f, 1.04f, .97f, 1}, EASE_IN_OUT };
@@ -387,29 +387,6 @@ struct Flame : Element {
         gCtx->SetTransform(m * art);
         Solid(col, 1);
         gCtx->FillGeometry(g.Get(), gBrush.Get());
-    }
-};
-struct Logs : Element {
-    ComPtr<ID2D1PathGeometry> sticks = Path("M-46,24 L46,-6 M-46,-6 L46,24");
-    Logs() { still = true; }
-    D2D1_RECT_F Bounds(double) override { return TransformRect(RectF(-52, -12, 52, 30), kFire); }
-    void Draw(double, const D2D1_MATRIX_3X2_F& art) override {
-        gCtx->SetTransform(kFire * art);
-        Solid(0x5A3F22, 1);
-        gCtx->DrawGeometry(sticks.Get(), gBrush.Get(), 9, Glint::gRound.Get());
-    }
-};
-struct Ember : Element {
-    float x, dur, off;
-    Track op{ {0, .15f, 1}, {0, 1, 0}, LINEAR };
-    Ember(float x_, float d, float o) : x(x_), dur(d), off(o) { smooth = true; }
-    D2D1_POINT_2F At(double t) { float p = Phase(t, dur, off); return Point2F(1210 + x + 30 * p, 830 - 260 * p); }
-    D2D1_RECT_F Bounds(double t) override { auto a = At(t); return Circle(a.x, a.y, 4); }
-    void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
-        auto a = At(t);
-        gCtx->SetTransform(art);
-        Solid(0xFFC56A, op(Phase(t, dur, off)));
-        gCtx->FillEllipse(Ellipse(a, 2.4f, 2.4f), gBrush.Get());
     }
 };
 struct Mote : Element {  // dust drifting over the map
@@ -541,14 +518,15 @@ struct CabinWindow : Element {  // the cabin's lit windows, flickering now and t
 struct Mist : Element {  // a band of mist drifting along the valley
     ComPtr<ID2D1LinearGradientBrush> b;
     float y, h;
-    Mist(float y_, float h_) : y(y_), h(h_) {
+    float off;
+    Mist(float y_, float h_, uint32_t col = 0x9FC7D0, float a = .11f, float off_ = 0) : y(y_), h(h_), off(off_) {
         slow = true; rate = 4;
-        D2D1_GRADIENT_STOP st[3] = { {0, Hex(0x9FC7D0, 0)}, {.5f, Hex(0x9FC7D0, .11f)}, {1, Hex(0x9FC7D0, 0)} };
+        D2D1_GRADIENT_STOP st[3] = { {0, Hex(col, 0)}, {.5f, Hex(col, a)}, {1, Hex(col, 0)} };
         ComPtr<ID2D1GradientStopCollection> c;
         gCtx->CreateGradientStopCollection(st, 3, &c);
         gCtx->CreateLinearGradientBrush(LinearGradientBrushProperties(Point2F(0, y), Point2F(0, y + h)), c.Get(), &b);
     }
-    float X(double t) { float p = Phase(t, 80, 0); return -120 * std::cos(2 * PI * p); }
+    float X(double t) { float p = Phase(t, 80, off); return -120 * std::cos(2 * PI * p); }
     D2D1_RECT_F Bounds(double t) override { float dx = X(t); return RectF(ART_L - 200 + dx, y, ART_R + 200 + dx, y + h); }
     void Draw(double t, const D2D1_MATRIX_3X2_F& art) override {
         gCtx->SetTransform(art);
@@ -753,12 +731,10 @@ static Scene* BuildScene(SceneId id) {
             m->x = frand10(ART_L + 100 + r() * (ART_R - ART_L - 200)); m->y = frand10(500 + r() * 520); m->dur = frand10(10 + r() * 9); m->off = frand10(r() * 16);
             E.push_back(m);
         }
-        E.push_back(new Glow(1210, 900, 230, { {0, Hex(0xFFB25B, .55f)}, {1, Hex(0xFFB25B, 0)} }, 2.2f, 0, 1, 1.04f, .7f, 1));
-        E.push_back(new Logs());
-        E.push_back(new Flame("M0,-118 C34,-72 46,-46 30,-6 C22,14 -22,14 -30,-6 C-44,-40 -18,-62 0,-118 Z", 1.3f, 0, 0xC8401F));
-        E.push_back(new Flame("M2,-74 C22,-46 26,-30 16,-8 C10,4 -12,4 -16,-8 C-24,-30 -8,-44 2,-74 Z", 1.05f, .4f, 0xF29A3A));
-        E.push_back(new Flame("M2,-40 C12,-26 12,-16 7,-6 C4,0 -6,0 -8,-6 C-11,-16 -4,-24 2,-40 Z", .8f, .2f, 0xFFE07A));
-        for (int i = 0; i < 6; i++) E.push_back(new Ember(-20.f + i * 8, 2.4f + i * .4f, i * .7f));
+        E.push_back(new Glow(1210, 786, 150, { {0, Hex(0xFFC06A, .6f)}, {.4f, Hex(0xFFB25B, .25f)}, {1, Hex(0xFFB25B, 0)} }, 2.2f, 0, 1, 1.04f, .7f, 1));
+        E.push_back(new Flame("M0,-118 C34,-72 46,-46 30,-6 C22,14 -22,14 -30,-6 C-44,-40 -18,-62 0,-118 Z", 1.3f, 0, 0xE8762A));
+        E.push_back(new Flame("M2,-74 C22,-46 26,-30 16,-8 C10,4 -12,4 -16,-8 C-24,-30 -8,-44 2,-74 Z", 1.05f, .4f, 0xF7B24A));
+        E.push_back(new Flame("M2,-40 C12,-26 12,-16 7,-6 C4,0 -6,0 -8,-6 C-11,-16 -4,-24 2,-40 Z", .8f, .2f, 0xFFF0B0));
         E.push_back(new Needle());
         s->layers = { 0 };
     } else if (id == STARLIT) {
@@ -774,6 +750,7 @@ static Scene* BuildScene(SceneId id) {
         E.push_back(new Moon(1480, 230, 54));
         const float g[6][3] = { {-80, 0, 160}, {-60, 28, 120}, {-44, 58, 88}, {-30, 94, 60}, {-20, 136, 40}, {-12, 186, 24} };
         for (int i = 0; i < 6; i++) E.push_back(new Glint(1480 + g[i][0], 812 + g[i][1], g[i][2], 3 + i * .5f, i * .6f, 4, 0xFFF3D6));
+        E.push_back(new Mist(820, 90, 0xB9C2EE, .22f, 20));   // mist drifting on the water
         E.push_back(new LayerEl(2));
         E.push_back(new CabinWindow(600, 905));
         s->layers = { 0, 2 };

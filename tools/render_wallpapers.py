@@ -30,10 +30,8 @@ LAYERS = {"shire": ["back", "mid", "front"], "redbook": ["back"], "starlit": ["b
 
 
 def save_layer(png: Path, out: Path):
-    im = Image.open(png).convert("RGBA")
-    # flat colours: a 256-colour palette with alpha is a fraction of the size and looks the same
-    q = im.quantize(colors=256, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE)
-    q.save(out, optimize=True)
+    # full colour: the scenes have soft gradients and light now, which a 256-colour palette would band
+    Image.open(png).convert("RGBA").save(out, optimize=True)
 
 
 async def render(out: Path):

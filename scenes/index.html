@@ -96,6 +96,12 @@ function hill(base, amp, seed, bottom = H + 10) {
   for (let x = X0 - 20; x <= X1 + 20; x += 12) { let y = base; for (const c of k) y += Math.sin(x * c.f + c.p) * c.a; d += ` L${x},${f1(y)}`; }
   return d + ` L${X1 + 20},${bottom} Z`;
 }
+/** The height of hill(base, amp, seed) at x, to sit things exactly on its crest. */
+function hillY(base, amp, seed, x) {
+  const r = rng(seed);
+  const k = [...Array(4)].map((_, i) => ({ f: (0.6 + r() * 1.4) * (i + 1) / W * Math.PI * 2, p: r() * 7, a: amp / (i + 1.2) }));
+  let y = base; for (const c of k) y += Math.sin(x * c.f + c.p) * c.a; return y;
+}
 function mountains(base, amp, seed, rough, peaks) {
   const r = rng(seed), n = 257, ys = new Array(n).fill(0);
   ys[0] = r() * amp; ys[n - 1] = r() * amp;
@@ -112,14 +118,42 @@ const grainDef = `<filter id="grain" x="0" y="0" width="1" height="1"><feTurbule
 const grain = (layer, o) => add('back', `<rect x="${X0}" y="0" width="${X1 - X0}" height="${H}" filter="url(#grain)" opacity="${o}"/>`);
 const at = (x, y, s, body) => `<g transform="translate(${x},${y}) scale(${s})">${body}</g>`;
 
+// ---- depth: colours, gradients and light shared by the scenes
+const hex = c => [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16));
+const mix = (a, b, t) => '#' + hex(a).map((v, i) => Math.round(v + (hex(b)[i] - v) * t).toString(16).padStart(2, '0')).join('');
+let gid = 0;
+/** A top-to-bottom gradient (over the shape's own height): paler and hazier at the crest, deeper below. */
+function vg(top, bottom, mid) {
+  const id = 'v' + (gid++);
+  def(`<linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${top}"/>${mid ? `<stop offset="${mid[1]}" stop-color="${mid[0]}"/>` : ''}<stop offset="1" stop-color="${bottom}"/></linearGradient>`);
+  return `url(#${id})`;
+}
+/** Light falling from a point (the sun, the moon, a lamp): a radial paint in scene units. */
+function lightFrom(x, y, r, color, o = 1) {
+  const id = 'l' + (gid++);
+  def(`<radialGradient id="${id}" gradientUnits="userSpaceOnUse" cx="${x}" cy="${y}" r="${r}"><stop offset="0" stop-color="${color}" stop-opacity="${o}"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></radialGradient>`);
+  return `url(#${id})`;
+}
+/** A land layer: its gradient fill, and a thin lit edge on the side facing the light. */
+const land = (layer, d, top, bottom, rim) => add(layer, `<path d="${d}" fill="${vg(top, bottom)}"/>` + (rim ? `<path d="${d}" fill="none" stroke="${rim}" stroke-width="${PC ? 1.6 : 2.2}" opacity=".7"/>` : ''));
+/** A band of haze at the foot of a far layer, so nearer land stands in front of it. */
+const haze = (layer, y, h, color, o) => { const id = 'h' + (gid++); def(`<linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity="0"/><stop offset="1" stop-color="${color}" stop-opacity="${o}"/></linearGradient>`); add(layer, `<rect x="${X0}" y="${y}" width="${X1 - X0}" height="${h}" fill="url(#${id})"/>`); };
+/** A soft darkening at the edges, so the eye settles in the middle. */
+const vignette = (color, o) => { def(`<radialGradient id="vig" cx=".5" cy=".55" r=".75"><stop offset=".55" stop-color="${color}" stop-opacity="0"/><stop offset="1" stop-color="${color}" stop-opacity="${o}"/></radialGradient>`); add('back', `<rect x="${X0}" y="0" width="${X1 - X0}" height="${H}" fill="url(#vig)"/>`); };
+
 // Where things sit, per format (x, y, scale), so the apps can place the moving parts too.
 const P = PC ? {
-  sun: [1390, 250, 1], tree: [470, 600, 1], door: [1240, 905, 1], chimney: [1389, 826], river: 760,
-  fire: [1210, 930, 1], compass: [1760, 900, 1], moon: [1480, 230, 54], lakeY: 790, glint: [1480, 812],
+  sun: [1390, 250, 1], tree: [470, 600, 1], farTree: [1660, 520, .45], nearTree: [60, 900, 1.6], door: [1240, 905, 1], chimney: [1389, 826], river: 760,
+  clouds: [[1640, 190, 1, .9, 260], [980, 140, .7, .75, 320], [1240, 420, .55, .8, 380], [320, 470, .6, .7, 300], [-260, 260, .8, .8, 340]],
+  glints: [[140, 775, 70], [520, 792, 40], [1010, 771, 90], [1560, 752, 50], [-300, 768, 60], [2100, 770, 70]],
+  fire: [1210, 820, 1], compass: [1760, 900, 1], moon: [1480, 230, 54], lakeY: 790, glint: [1480, 812],
   cabin: [600, 905], star: [1160, 150, 1], clock: [150, 150],
 } : {
-  sun: [830, 900, 1], tree: [220, 1380, 1.25], door: [740, 1880, 1.6], chimney: [893, 1736], river: 1560,
-  fire: [560, 1860, 1.5], compass: [900, 1900, 1], moon: [820, 960, 64], lakeY: 1760, glint: [820, 1786],
+  // the phone: the clock and the sun's arc sit in the top 1000; the land rises to meet them
+  sun: [820, 1060, 1], tree: [220, 1330, 1.25], farTree: [880, 1176, .5], nearTree: [40, 2010, 2.1], door: [740, 1850, 1.6], chimney: [893, 1706], river: 1500,
+  clouds: [[160, 1100, .85, .85, 220], [930, 1150, .62, .8, 280], [470, 1210, .45, .7, 340]],
+  glints: [[120, 1512, 60], [560, 1530, 40], [900, 1478, 50]],
+  fire: [560, 1700, 1.4], compass: [900, 1900, 1], moon: [820, 960, 64], lakeY: 1760, glint: [820, 1786],
   cabin: [430, 1960], star: [540, 140, 1.2], clock: [540, 300],
 };
 
@@ -132,66 +166,94 @@ function shire() {
     autumn: { hills: ['#CAC8AE', '#C3BE84', '#A9AE6A', '#9A9C58', '#8D8C4E', '#6E7440'], tree: ['#D9843A', '#E8A646', '#C8562E'], flowers: ['#E8A646', '#C8562E', '#D6C38A', '#B8743A'], sky: ['#CFE0DE', '#EAE6DC', '#EEE1CF'] },
     winter: { hills: ['#E9EEF0', '#DCE6E8', '#CCDADB', '#BACDCC', '#AFC4C2', '#8FA9A6'], tree: ['#C7D6D6', '#E6EEEF', '#FFFFFF'], flowers: ['#FFFFFF', '#FFFFFF', '#E9F2F4', '#FFFFFF'], sky: ['#C6D8E4', '#E4EAF0', '#F0EEE9'] },
   }[S];
-  def(`${grainDef}<linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${pal.sky[0]}"/><stop offset="${PC ? .45 : .35}" stop-color="${pal.sky[1]}"/><stop offset="${PC ? .72 : .55}" stop-color="${pal.sky[2]}"/></linearGradient>
+  const hl = pal.hills, sky2 = pal.sky[2];
+  def(`${grainDef}<linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${pal.sky[0]}"/><stop offset="${PC ? .45 : .35}" stop-color="${pal.sky[1]}"/><stop offset="${PC ? .72 : .52}" stop-color="${pal.sky[2]}"/></linearGradient>
   <radialGradient id="sun"><stop offset="0" stop-color="#FFF6D8"/><stop offset=".28" stop-color="#FFEFC0"/><stop offset=".29" stop-color="#FFE7A6" stop-opacity=".55"/><stop offset="1" stop-color="#FFE7A6" stop-opacity="0"/></radialGradient>
-  <linearGradient id="river" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="${S === 'winter' ? '#DDEBEE' : '#CFE7E4'}"/><stop offset="1" stop-color="${S === 'winter' ? '#BFD8DE' : '#A9D3D3'}"/></linearGradient>
-  <linearGradient id="haze" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${pal.sky[2]}" stop-opacity="0"/><stop offset="1" stop-color="${pal.sky[2]}" stop-opacity=".75"/></linearGradient>`);
+  <linearGradient id="river" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="${S === 'winter' ? '#DDEBEE' : '#CFE7E4'}"/><stop offset=".5" stop-color="${S === 'winter' ? '#E8F2F4' : '#DDF0EC'}"/><stop offset="1" stop-color="${S === 'winter' ? '#BFD8DE' : '#A9D3D3'}"/></linearGradient>
+  <radialGradient id="door" cx=".42" cy=".38" r=".7"><stop offset="0" stop-color="#3E8657"/><stop offset="1" stop-color="#22522F"/></radialGradient>
+  <radialGradient id="lantern"><stop offset="0" stop-color="#FFE6A8" stop-opacity=".6"/><stop offset="1" stop-color="#FFE6A8" stop-opacity="0"/></radialGradient>`);
   add('back', `<rect x="${X0}" y="0" width="${X1 - X0}" height="${H}" fill="url(#sky)"/>`);
-  // sun and clouds move (drawn by the apps); here for the browser
   const [sx, sy] = P.sun;
+  // the morning light along the horizon, under the sun
+  add('back', `<rect x="${X0}" y="0" width="${X1 - X0}" height="${H}" fill="${lightFrom(sx, sy, PC ? 1100 : 900, '#FFF1CC', .55)}"/>`);
+  // sun and clouds move (drawn by the apps); here for the browser
   add('under', `<circle class="pulse" cx="${sx}" cy="${sy}" r="300" fill="url(#sun)"/>`);
   const cloud = (x, y, s, o, dur) => add('under', `<g class="drift" style="animation-duration:${dur}s;animation-delay:-${(x + 700) / 3900 * dur}s"><g transform="translate(${x},${y}) scale(${s})" fill="#fff" opacity="${o}"><rect x="-90" y="-8" width="200" height="34" rx="17"/><circle cx="-30" cy="-6" r="32"/><circle cx="20" cy="-22" r="42"/><circle cx="66" cy="-2" r="26"/></g></g>`);
-  if (PC) { cloud(1640, 190, 1, .9, 260); cloud(980, 140, .7, .75, 320); cloud(1240, 420, .55, .8, 380); cloud(320, 470, .6, .7, 300); cloud(-260, 260, .8, .8, 340); }
-  else { cloud(180, 900, .9, .85, 220); cloud(900, 1150, .7, .8, 280); cloud(520, 780, .5, .7, 340); }
-  const b = PC ? 0 : 740;  // the phone's land starts lower
-  add('mid', `<path d="${hill(560 + b, PC ? 22 : 26, 3)}" fill="${pal.hills[0]}"/><rect x="${X0}" y="${520 + b}" width="${X1 - X0}" height="120" fill="url(#haze)"/>
-  <path d="${hill(610 + b, PC ? 28 : 30, 9)}" fill="${pal.hills[1]}"/><path d="${hill(660 + b, 34, 21)}" fill="${pal.hills[2]}"/>`);
-  if (S === 'winter') add('mid', `<path d="${hill(566 + b, PC ? 22 : 26, 3)}" fill="#FFFFFF" opacity=".55"/>`);
-  // the Party Tree
-  const [tx, ty, ts] = P.tree, tc = pal.tree;
-  add('mid', at(tx, ty, ts, `<g class="sway"><rect x="-5" y="-20" width="10" height="64" rx="4" fill="#5B4A33"/>` +
+  for (const [x, y, sc, o, d] of P.clouds) cloud(x, y, sc, o, d);
+  const b = PC ? 0 : 680;  // the phone's land starts lower
+  const rimSun = lightFrom(sx, sy, PC ? 1300 : 1000, '#FFFBEA', .75);
+  // far away: a blue-green ridge in the haze, with a few far trees
+  const far = mix(hl[0], pal.sky[0], .45);
+  land('mid', hill(500 + b, PC ? 18 : 22, 41), mix(far, sky2, .25), far);
+  if (S !== 'winter') { const rf = rng(17), fc = mix(far, hl[5], .16); for (let i = 0; i < (PC ? 22 : 9); i++) {   // far copses, sitting on the ridge
+    const x = X0 + rf() * (X1 - X0), y = hillY(500 + b, PC ? 18 : 22, 41, x) + 3, s0 = (PC ? .8 : 1) * (.7 + rf() * .5);
+    add('mid', `<g fill="${fc}" opacity=".75"><circle cx="${f1(x - 8 * s0)}" cy="${f1(y - 6 * s0)}" r="${f1(7 * s0)}"/><circle cx="${f1(x + 4 * s0)}" cy="${f1(y - 10 * s0)}" r="${f1(9 * s0)}"/><circle cx="${f1(x + 14 * s0)}" cy="${f1(y - 5 * s0)}" r="${f1(6 * s0)}"/></g>`); } }
+  haze('mid', 440 + b, 120, sky2, .7);
+  land('mid', hill(560 + b, PC ? 22 : 26, 3), mix(hl[0], '#FFFFFF', .15), hl[0], rimSun);
+  haze('mid', 520 + b, 120, sky2, .55);
+  land('mid', hill(610 + b, PC ? 28 : 30, 9), mix(hl[1], '#FFFFFF', .12), mix(hl[1], hl[2], .5), rimSun);
+  land('mid', hill(660 + b, 34, 21), mix(hl[2], '#FFFFFF', .1), mix(hl[2], hl[3], .6), rimSun);
+  if (S === 'winter') add('mid', `<path d="${hill(566 + b, PC ? 22 : 26, 3)}" fill="#FFFFFF" opacity=".5"/>`);
+  // trees at three distances: a small one on the far hills, the Party Tree, a big one up close
+  const treeAt = (layer, x, y, s, tc, trunk, sway) => add(layer, at(x, y, s, `<g${sway ? ' class="sway"' : ''}><path d="M-6,44 C-5,20 -4,0 -3,-20 L3,-20 C4,0 5,20 7,44 Z" fill="${trunk}"/><path d="M-2,-6 L-22,-34 M1,-14 L20,-40" stroke="${trunk}" stroke-width="4" stroke-linecap="round"/>` +
     (S === 'winter'
-      ? `<path d="M0,-10 L-30,-70 M0,-30 L28,-84 M0,-50 L-8,-104 M-18,-46 L-48,-60 M16,-60 L44,-58" stroke="#5B4A33" stroke-width="5" stroke-linecap="round"/><g fill="#FFFFFF" opacity=".9"><circle cx="-30" cy="-72" r="6"/><circle cx="28" cy="-86" r="6"/><circle cx="-8" cy="-106" r="6"/><circle cx="44" cy="-60" r="5"/><circle cx="-48" cy="-62" r="5"/></g>`
-      : `<circle cx="0" cy="-58" r="52" fill="${tc[0]}"/><circle cx="-44" cy="-30" r="34" fill="${tc[0]}"/><circle cx="46" cy="-32" r="38" fill="${tc[0]}"/><circle cx="10" cy="-78" r="34" fill="${tc[1]}"/><circle cx="-22" cy="-62" r="22" fill="${tc[2]}"/>` +
-        (S === 'spring' ? [...Array(16)].map((_, i) => { const r = rng(90 + i); return `<circle cx="${f1(-60 + r() * 120)}" cy="${f1(-110 + r() * 90)}" r="${f1(3 + r() * 3)}" fill="${i % 2 ? '#F2B8C6' : '#FFFFFF'}"/>`; }).join('') : '')) +
-    `</g>`));
-  // the river
+      ? `<path d="M0,-10 L-30,-70 M0,-30 L28,-84 M0,-50 L-8,-104 M-18,-46 L-48,-60 M16,-60 L44,-58" stroke="${trunk}" stroke-width="5" stroke-linecap="round"/><g fill="#FFFFFF" opacity=".9"><circle cx="-30" cy="-72" r="6"/><circle cx="28" cy="-86" r="6"/><circle cx="-8" cy="-106" r="6"/><circle cx="44" cy="-60" r="5"/><circle cx="-48" cy="-62" r="5"/></g>`
+      : `<g fill="${vg(mix(tc[1], '#FFFFFF', .12), tc[0])}"><circle cx="-44" cy="-30" r="34"/><circle cx="46" cy="-32" r="38"/><circle cx="0" cy="-58" r="52"/></g><circle cx="10" cy="-78" r="34" fill="${mix(tc[1], '#FFF6D8', .18)}"/><circle cx="-22" cy="-62" r="22" fill="${tc[2]}"/><path d="M-60,-20 C-30,0 30,2 70,-22 C60,-4 30,6 0,6 C-30,6 -54,-4 -60,-20Z" fill="#000" opacity=".08"/>` +
+        (S === 'spring' ? [...Array(16)].map((_, i) => { const r = rng(90 + i); return `<circle cx="${f1(-60 + r() * 120)}" cy="${f1(-110 + r() * 90)}" r="${f1(3 + r() * 3)}" fill="${i % 2 ? '#F2B8C6' : '#FFFFFF'}"/>`; }).join('') : '')) + `</g>`));
+  const [tx, ty, ts] = P.tree;
+  treeAt('mid', P.farTree[0], P.farTree[1], P.farTree[2], pal.tree.map(c => mix(c, far, .45)), mix('#5B4A33', far, .45), false);
+  treeAt('mid', tx, ty, ts, pal.tree, '#5B4A33', true);
+  // the river, with a lighter middle where it catches the sky
   const rv = P.river;
   add('mid', PC
     ? `<path d="M${X0 - 20},${rv} C300,720 520,800 820,770 S1300,700 1500,735 S1800,790 ${X1 + 20},${rv} L${X1 + 20},${rv + 30} C1700,820 1520,770 1300,770 S860,830 600,820 S200,770 ${X0 - 20},${rv + 40} Z" fill="url(#river)"/>`
-    : `<path d="M-20,${rv} C200,1520 420,1600 640,1570 S960,1500 1100,1540 L1100,1580 C940,1550 820,1610 640,1610 S220,1570 -20,1600 Z" fill="url(#river)"/>`);
-  const glints = PC ? [[140, 775, 70], [520, 792, 40], [1010, 771, 90], [1560, 752, 50], [-300, 768, 60], [2100, 770, 70]] : [[120, 1572, 60], [560, 1590, 40], [900, 1548, 50]];
-  glints.forEach(([x, y, w], i) => add('moving', `<path class="glint" style="animation-duration:${4 + i % 3}s;animation-delay:-${i * 1.3}s" d="M${x},${y} h${w}" stroke="#fff" stroke-width="${PC ? 3 : 4}" stroke-linecap="round"/>`));
-  // the hill with the round doors
-  if (PC) add('front', `<path d="M820,1090 C900,860 1080,790 1320,790 C1560,790 1760,850 ${X1 + 20},900 L${X1 + 20},1090 Z" fill="${pal.hills[4]}"/>
-    <path d="M${X0 - 20},1090 L${X0 - 20},870 C-200,860 0,850 200,850 C420,860 640,900 760,925 C860,980 900,1090 900,1090 Z" fill="${pal.hills[3]}"/>`);
-  else add('front', `<path d="M260,2410 C320,1880 520,1720 760,1710 C900,1704 1020,1740 1100,1780 L1100,2410 Z" fill="${pal.hills[4]}"/>
-    <path d="M-20,2410 L-20,1820 C120,1780 260,1800 380,1860 C460,1900 520,2000 540,2410 Z" fill="${pal.hills[3]}"/>`);
-  // (winter: the hills' palette is already snowy)
-  const door = (x, y, r, c, win) => {
-    add('front', `<circle cx="${x}" cy="${y}" r="${r + r * 0.2}" fill="#C8BA9F"/><circle cx="${x}" cy="${y}" r="${r}" fill="${c}"/><circle cx="${x}" cy="${y}" r="${r * 0.12}" fill="#E8B84A"/><path d="M${x - r},${y} h${2 * r} M${x},${y - r} v${2 * r}" stroke="#000" stroke-opacity=".12" stroke-width="${r / 20}"/>`);
-    if (win) add('front', `<circle cx="${x + win}" cy="${y - r * 0.18}" r="${r * 0.38}" fill="#C8BA9F"/><circle cx="${x + win}" cy="${y - r * 0.18}" r="${r * 0.27}" fill="#FFF1C4"/><path d="M${x + win - r * 0.27},${y - r * 0.18} h${r * 0.54} M${x + win},${y - r * 0.45} v${r * 0.54}" stroke="#C8BA9F" stroke-width="${r / 16}"/>`);
+    : `<path d="M-20,${rv} C200,${rv - 40} 420,${rv + 40} 640,${rv + 10} S960,${rv - 60} 1100,${rv - 20} L1100,${rv + 20} C940,${rv - 10} 820,${rv + 50} 640,${rv + 50} S220,${rv + 10} -20,${rv + 40} Z" fill="url(#river)"/>`);
+  P.glints.forEach(([x, y, w], i) => add('moving', `<path class="glint" style="animation-duration:${4 + i % 3}s;animation-delay:-${i * 1.3}s" d="M${x},${y} h${w}" stroke="#fff" stroke-width="${PC ? 3 : 4}" stroke-linecap="round"/>`));
+  // the hill with the round doors, lit from the sun's side
+  const hillA = PC ? `M820,1090 C900,860 1080,790 1320,790 C1560,790 1760,850 ${X1 + 20},900 L${X1 + 20},1090 Z` : `M260,2410 C320,1850 520,1690 760,1680 C900,1674 1020,1710 1100,1750 L1100,2410 Z`;
+  const hillB = PC ? `M${X0 - 20},1090 L${X0 - 20},870 C-200,860 0,850 200,850 C420,860 640,900 760,925 C860,980 900,1090 900,1090 Z` : `M-20,2410 L-20,1820 C120,1780 260,1800 380,1860 C460,1900 520,2000 540,2410 Z`;
+  land('front', hillA, mix(hl[4], '#FFFFFF', .1), mix(hl[4], hl[5], .55), rimSun);
+  land('front', hillB, mix(hl[3], '#FFFFFF', .08), mix(hl[3], hl[5], .5), rimSun);
+  const door = (x, y, r, c, win, main) => {
+    const stones = main ? [...Array(14)].map((_, i) => { const a0 = i / 14 * Math.PI * 2, a1 = a0 + Math.PI * 2 / 14 - .05, R = r * 1.2, R2 = r * 1.02;
+      return `<path d="M${f1(x + Math.cos(a0) * R2)},${f1(y + Math.sin(a0) * R2)} L${f1(x + Math.cos(a0) * R)},${f1(y + Math.sin(a0) * R)} A${f1(R)},${f1(R)} 0 0 1 ${f1(x + Math.cos(a1) * R)},${f1(y + Math.sin(a1) * R)} L${f1(x + Math.cos(a1) * R2)},${f1(y + Math.sin(a1) * R2)} A${f1(R2)},${f1(R2)} 0 0 0 ${f1(x + Math.cos(a0) * R2)},${f1(y + Math.sin(a0) * R2)}Z" fill="${i % 3 ? '#D3C6AA' : '#C2B393'}"/>`; }).join('') : `<circle cx="${x}" cy="${y}" r="${r * 1.2}" fill="#C8BA9F"/>`;
+    add('front', `${main ? `<ellipse cx="${x}" cy="${y + r * 1.22}" rx="${r * 1.05}" ry="${r * .16}" fill="#B5A688"/>` : ''}${stones}<circle cx="${x}" cy="${y}" r="${r}" fill="${main ? 'url(#door)' : c}"/>` +
+      `${main ? [...Array(7)].map((_, i) => `<path d="M${f1(x - r + (i + 1) * r / 4)},${f1(y - Math.sqrt(Math.max(0, r * r - Math.pow(-r + (i + 1) * r / 4 - 0, 2))))} V${f1(y + Math.sqrt(Math.max(0, r * r - Math.pow(-r + (i + 1) * r / 4, 2))))}" stroke="#000" stroke-opacity=".1" stroke-width="${f1(r / 28)}"/>`).join('') : `<path d="M${x - r},${y} h${2 * r} M${x},${y - r} v${2 * r}" stroke="#000" stroke-opacity=".12" stroke-width="${r / 20}"/>`}` +
+      `<circle cx="${x}" cy="${y}" r="${r * 0.12}" fill="#E8B84A"/><circle cx="${x - r * .03}" cy="${y - r * .03}" r="${r * 0.05}" fill="#FFF0C0"/>`);
+    if (win) add('front', `<circle cx="${x + win}" cy="${y - r * 0.18}" r="${r * 0.38}" fill="#C8BA9F"/><circle cx="${x + win}" cy="${y - r * 0.18}" r="${r * 0.27}" fill="#FFF1C4"/><path d="M${x + win - r * 0.27},${y - r * 0.18} h${r * 0.54} M${x + win},${y - r * 0.45} v${r * 0.54}" stroke="#C8BA9F" stroke-width="${r / 16}"/>` +
+      (main ? `<path d="M${x + win - r * .5},${y + r * .22} h${r} v${r * .1} h-${r}z" fill="#9A7A52"/>${[0, 1, 2, 3].map(k => `<circle cx="${f1(x + win - r * .38 + k * r * .25)}" cy="${f1(y + r * .16)}" r="${f1(r * .09)}" fill="${pal.flowers[k % 4]}"/>`).join('')}` : ''));
   };
   const [dx, dy, ds] = P.door;
-  door(dx, dy, 44 * ds, '#2F6B42', -92 * ds);
+  door(dx, dy, 44 * ds, '#2F6B42', -92 * ds, true);
+  // a lantern by the door
+  add('front', `<circle cx="${dx + 70 * ds}" cy="${dy - 30 * ds}" r="${34 * ds}" fill="url(#lantern)"/><path d="M${dx + 70 * ds},${dy - 30 * ds} v${-14 * ds}" stroke="#4A3A28" stroke-width="${2 * ds}"/><rect x="${dx + 64 * ds}" y="${dy - 30 * ds}" width="${12 * ds}" height="${14 * ds}" rx="${2 * ds}" fill="#FFE2A0" stroke="#4A3A28" stroke-width="${1.5 * ds}"/>`);
   if (PC) { door(1560, 935, 30, '#E2B64A', 64); door(-160, 930, 28, '#3A6E9A', 56); door(2160, 950, 26, '#B4532F', -52); }
   const [cx, cy] = P.chimney, cs = PC ? 1 : 1.45;
-  add('front', `<rect x="${cx - 9 * cs}" y="${cy}" width="${18 * cs}" height="${40 * cs}" rx="3" fill="#7A6247"/>`);
+  add('front', `<rect x="${cx - 9 * cs}" y="${cy}" width="${18 * cs}" height="${40 * cs}" rx="3" fill="${vg('#8E7556', '#5E4A35')}"/><rect x="${cx - 11 * cs}" y="${cy - 4 * cs}" width="${22 * cs}" height="${7 * cs}" rx="2" fill="#6A553D"/>`);
   for (let k = 0; k < 4; k++) add('over', STILL
     ? `<circle cx="${cx + 3 * cs + k * 14 * cs}" cy="${cy - 20 * cs - k * 40 * cs}" r="${(9 + k * 5) * cs}" fill="#fff" opacity="${.55 - k * .11}"/>`
     : `<circle class="smoke" style="animation-delay:-${k * 1.25}s" cx="${cx + 3 * cs}" cy="${cy - 20 * cs}" r="${(10 + k * 3) * cs}" fill="#fff" opacity=".5"/>`);
-  add('front', PC ? `<path d="M1060,1090 C1120,1020 1180,975 1240,955" stroke="#D2C6AA" stroke-width="22" fill="none" stroke-linecap="round"/>`
-                  : `<path d="M560,2050 C620,1990 680,1970 740,1962" stroke="#D2C6AA" stroke-width="30" fill="none" stroke-linecap="round"/>`);
-  if (PC) add('front', `<path d="M640,905 q30,-34 60,0 q30,-30 60,2 q26,-28 52,6 v20 h-172 z" fill="${pal.hills[5]}"/>`);
-  const r = rng(5), n = S === 'spring' ? 80 : S === 'winter' ? 0 : 46;
+  // the garden path to the door, edged with stones, and a little fence and gate
+  const path = PC ? `M1060,1090 C1120,1020 1180,975 1240,955` : `M600,2140 C640,2030 690,1960 740,1934`;
+  add('front', `<path d="${path}" stroke="#BFB194" stroke-width="${PC ? 30 : 42}" fill="none" stroke-linecap="round"/><path d="${path}" stroke="#DCD0B4" stroke-width="${PC ? 20 : 28}" fill="none" stroke-linecap="round"/>`);
+  const fence = PC ? [1300, 1006, 1480, 980, 9] : [800, 1990, 1080, 1960, 8];
+  { const [x0f, y0f, x1f, y1f, n] = fence, post = PC ? 30 : 42;
+    let f = `<path d="M${x0f},${y0f - post * .55} L${x1f},${y1f - post * .55} M${x0f},${y0f - post * .25} L${x1f},${y1f - post * .25}" stroke="#8C6F4C" stroke-width="${PC ? 4 : 5}"/>`;
+    for (let i = 0; i <= n; i++) { const x = x0f + (x1f - x0f) * i / n, y = y0f + (y1f - y0f) * i / n; f += `<path d="M${f1(x - 3)},${f1(y)} V${f1(y - post)} l3,-5 l3,5 V${f1(y)}Z" fill="#9A7B55"/>`; }
+    add('front', f); }
+  if (PC) add('front', `<path d="M640,905 q30,-34 60,0 q30,-30 60,2 q26,-28 52,6 v20 h-172 z" fill="${hl[5]}"/>`);
+  const r = rng(5), n = S === 'spring' ? 90 : S === 'winter' ? 0 : 56;
   for (let i = 0; i < n; i++) {
-    const x = PC ? 900 + r() * 1400 : 380 + r() * 700, y = PC ? 960 + r() * 110 : 1900 + r() * 130;
+    const x = PC ? 900 + r() * 1400 : 380 + r() * 700, y = PC ? 960 + r() * 110 : 1880 + r() * 150;
     add('front', `<circle cx="${f1(x)}" cy="${f1(y)}" r="${f1((3 + r() * 2.5) * (PC ? 1 : 1.3))}" fill="${pal.flowers[i % 4]}"/>`);
   }
   if (S === 'autumn') for (let i = 0; i < 40; i++) { const x = f1(X0 + r() * (X1 - X0)), y = f1(PC ? 960 + r() * 110 : 1900 + r() * 200); add('front', `<ellipse cx="${x}" cy="${y}" rx="6" ry="3" fill="${pal.tree[i % 3]}" transform="rotate(${f1(r() * 180)} ${x} ${y})"/>`); }
-  add('front', `<path d="${hill(PC ? 1030 : 2060, 14, 77)}" fill="${pal.hills[5]}"/>`);
+  // up close: a big tree at the edge, and the grass
+  treeAt('front', P.nearTree[0], P.nearTree[1], P.nearTree[2], pal.tree.map(c => mix(c, '#1E3A22', .22)), '#4A3B28', false);
+  land('front', hill(PC ? 1030 : 2060, 14, 77), hl[5], mix(hl[5], '#1E3A22', .35));
   if (S !== 'winter') for (let i = 0; i < (PC ? 160 : 60); i++) { const x = X0 + r() * (X1 - X0), h = 14 + r() * 26, y0 = PC ? 1040 : 2072; add('front', `<path d="M${f1(x)},${y0} q3,-${f1(h)} 7,-${f1(h + 4)} q-1,${f1(h * 0.6)} 2,${f1(h + 4)}z" fill="${S === 'autumn' ? '#7E7A3E' : '#456F3A'}"/>`); }
-  grain('front', .7);
+  vignette('#3A4A2A', .14);
+  grain('front', .9);
   return { ink: ['#27452A', '#3E6A3A', '#55703F'] };
 }
 
@@ -199,9 +261,32 @@ function shire() {
 function redbook() {
   const ink = '#5A3F22', red = '#9A2A1C', S = SEASON;
   def(`${grainDef}<radialGradient id="pap" cx=".5" cy=".42" r=".8"><stop offset="0" stop-color="#EEE8DA"/><stop offset=".6" stop-color="#E1D8C4"/><stop offset="1" stop-color="#C8BCA2"/></radialGradient>
-  <radialGradient id="fire"><stop offset="0" stop-color="#FFB25B" stop-opacity=".55"/><stop offset="1" stop-color="#FFB25B" stop-opacity="0"/></radialGradient>
-  <filter id="rough"><feTurbulence baseFrequency=".03" numOctaves="2" seed="2"/><feDisplacementMap in="SourceGraphic" scale="5"/></filter>`);
-  add('back', `<rect x="${X0}" y="0" width="${X1 - X0}" height="${H}" fill="url(#pap)"/><g filter="url(#rough)" fill="none" stroke="${ink}" stroke-linecap="round">`);
+  <radialGradient id="fire"><stop offset="0" stop-color="#FFC06A" stop-opacity=".6"/><stop offset=".4" stop-color="#FFB25B" stop-opacity=".25"/><stop offset="1" stop-color="#FFB25B" stop-opacity="0"/></radialGradient>
+  <filter id="rough" x="-.05" y="-.05" width="1.1" height="1.1"><feTurbulence baseFrequency=".03" numOctaves="2" seed="2"/><feDisplacementMap in="SourceGraphic" scale="5" result="d"/><feGaussianBlur in="d" stdDeviation="1.6" result="b"/><feComponentTransfer in="b" result="bleed"><feFuncA type="linear" slope=".35"/></feComponentTransfer><feGaussianBlur in="d" stdDeviation=".35" result="s"/><feMerge><feMergeNode in="bleed"/><feMergeNode in="s"/></feMerge></filter>
+  <filter id="fibres" x="0" y="0" width="1" height="1"><feTurbulence type="fractalNoise" baseFrequency=".012 .05" numOctaves="3" seed="9"/><feColorMatrix values="0 0 0 0 .45  0 0 0 0 .33  0 0 0 0 .2  0 0 0 .45 -.16"/><feComposite in2="SourceGraphic" operator="in"/></filter>
+  <filter id="mottle" x="0" y="0" width="1" height="1"><feTurbulence type="fractalNoise" baseFrequency=".004" numOctaves="4" seed="21"/><feColorMatrix values="0 0 0 0 .55  0 0 0 0 .4  0 0 0 0 .22  0 0 0 .6 -.22"/><feComposite in2="SourceGraphic" operator="in"/></filter>
+  <linearGradient id="gutter" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#5A3F22" stop-opacity="0"/><stop offset=".42" stop-color="#5A3F22" stop-opacity=".16"/><stop offset=".5" stop-color="#3A2614" stop-opacity=".42"/><stop offset=".58" stop-color="#5A3F22" stop-opacity=".16"/><stop offset="1" stop-color="#5A3F22" stop-opacity="0"/></linearGradient>
+  <linearGradient id="spine" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#3A2614" stop-opacity=".38"/><stop offset="1" stop-color="#3A2614" stop-opacity="0"/></linearGradient>
+  <linearGradient id="wax" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#E9DFC8"/><stop offset=".35" stop-color="#FBF5E6"/><stop offset="1" stop-color="#CDBF9F"/></linearGradient>
+  <linearGradient id="brass" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#8A6A2E"/><stop offset=".4" stop-color="#E2C27A"/><stop offset="1" stop-color="#7A5A22"/></linearGradient>`);
+  // the leather the book lies on, then the deckled page (or, on a wide screen, the open spread)
+  add('back', `<rect x="${X0}" y="0" width="${X1 - X0}" height="${H}" fill="#3B2617"/>`);
+  { const rd = rng(61), m = PC ? 14 : 18, step = 22; let d = '';
+    const edge = (x0, y0, x1, y1) => { const n = Math.max(2, Math.round(Math.hypot(x1 - x0, y1 - y0) / step)); for (let i = 1; i <= n; i++) { const t = i / n; d += ` L${f1(x0 + (x1 - x0) * t + (rd() - .5) * 3)},${f1(y0 + (y1 - y0) * t + (rd() - .5) * 3)}`; } };
+    d = `M${X0 + m},${m}`; edge(X0 + m, m, X1 - m, m); edge(X1 - m, m, X1 - m, H - m); edge(X1 - m, H - m, X0 + m, H - m); edge(X0 + m, H - m, X0 + m, m);
+    add('back', `<path d="${d}Z" fill="url(#pap)"/>`);
+    add('back', `<path d="${d}Z" fill="#fff" filter="url(#mottle)" opacity=".9"/><path d="${d}Z" fill="#fff" filter="url(#fibres)" opacity=".35"/>`);
+    // the fold down the middle of the spread, or the spine along the phone's page
+    if (PC) add('back', `<rect x="${960 - 160}" y="0" width="320" height="${H}" fill="url(#gutter)"/>`);
+    else add('back', `<rect x="${m}" y="0" width="110" height="${H}" fill="url(#spine)"/>`);
+    // the corner of the page lifting
+    const cx0 = X1 - m, cs = PC ? 120 : 150;
+    def(`<linearGradient id="curl" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#C8BCA2"/><stop offset=".5" stop-color="#F3EEE2"/><stop offset="1" stop-color="#D8CDB4"/></linearGradient>`);
+    add('back', `<path d="M${cx0 - cs},${m} L${cx0},${m + cs} L${cx0},${m} Z" fill="#3B2617"/><path d="M${cx0 - cs},${m} Q${cx0 - cs * .55},${m + cs * .3} ${cx0 - cs * .3},${m + cs * .72} Q${cx0 - cs * .1},${m + cs * .92} ${cx0},${m + cs} Q${cx0 - cs * .45},${m + cs * .6} ${cx0 - cs},${m} Z" fill="url(#curl)"/><path d="M${cx0 - cs},${m} Q${cx0 - cs * .45},${m + cs * .6} ${cx0},${m + cs}" stroke="#3A2614" stroke-opacity=".25" stroke-width="2" fill="none"/>`);
+  }
+  // a tea ring someone left on it long ago
+  { const [tx, ty] = PC ? [-180, 860] : [880, 2200]; add('back', `<circle cx="${tx}" cy="${ty}" r="${PC ? 70 : 90}" fill="none" stroke="#8A5A2A" stroke-opacity=".12" stroke-width="${PC ? 7 : 9}"/><circle cx="${tx + 4}" cy="${ty + 3}" r="${PC ? 66 : 85}" fill="none" stroke="#8A5A2A" stroke-opacity=".07" stroke-width="3"/>`); }
+  add('back', `<g filter="url(#rough)" fill="none" stroke="${ink}" stroke-linecap="round">`);
   if (PC) add('back', `<path d="M1500,-10 C1460,140 1560,240 1500,360 S1400,560 1480,700 S1600,900 1540,1090" stroke-width="3.2" stroke-opacity=".75"/>
     <path d="M1512,-10 C1474,140 1574,240 1514,360 S1414,560 1494,700 S1614,900 1554,1090" stroke-width="1.2" stroke-opacity=".45"/>
     <path d="M${X0},610 C-200,600 0,590 300,590 C520,640 760,600 760,600 S1180,560 1490,590 S1800,640 ${X1},620" stroke="${red}" stroke-width="2.4" stroke-dasharray="14 10" stroke-opacity=".8"/>
@@ -212,12 +297,12 @@ function redbook() {
   const r = rng(11), k = PC ? 1 : 1.25;
   const hm = (x, y, s) => add('back', `<path d="M${x - s},${y} q${s},-${s * 1.1} ${2 * s},0" stroke-width="${2 * k}" stroke-opacity=".7"/><path d="M${x - s * .4},${y - s * .35} l-${s * .25},${s * .35} M${x},${y - s * .55} l-${s * .25},${s * .55} M${x + s * .4},${y - s * .35} l-${s * .2},${s * .35}" stroke-width="${1.2 * k}" stroke-opacity=".5"/>`);
   (PC ? [[300, 420], [350, 440], [400, 418], [260, 450], [900, 760], [950, 780], [1010, 758], [1060, 790], [620, 300], [680, 280], [-300, 820], [-250, 840], [2100, 420], [2160, 440]]
-      : [[200, 1180], [260, 1200], [320, 1176], [150, 1210], [480, 1620], [540, 1640], [600, 1618]]).forEach(([x, y]) => hm(x, y, (22 + r() * 10) * k));
+      : [[200, 1180], [260, 1200], [320, 1176], [150, 1210], [560, 1170], [620, 1190], [680, 1166]]).forEach(([x, y]) => hm(x, y, (22 + r() * 10) * k));
   const tree = (x, y, s) => add('back', `<circle cx="${f1(x)}" cy="${f1(y)}" r="${f1(s)}" stroke-width="${1.6 * k}" stroke-opacity=".7"/><path d="M${f1(x)},${f1(y + s)} v${f1(s * .7)}" stroke-width="${1.4 * k}" stroke-opacity=".7"/>`);
   if (PC) { for (let i = 0; i < 90; i++) tree(1620 + r() * 760, 160 + r() * 660, 7 + r() * 5); for (let i = 0; i < 30; i++) tree(180 + r() * 260, 760 + r() * 200, 6 + r() * 4); for (let i = 0; i < 26; i++) tree(-440 + r() * 300, 300 + r() * 300, 6 + r() * 4); }
   else { for (let i = 0; i < 34; i++) tree(900 + r() * 170, 900 + r() * 700, 9 + r() * 6); for (let i = 0; i < 16; i++) tree(80 + r() * 260, 1780 + r() * 240, 8 + r() * 5); }
   add('back', `</g>`);
-  const nm = (x, y, t, s, ital = false, rot = 0) => add('back', `<text x="${x}" y="${y}" font-family="IM Fell English,serif" font-size="${s}" fill="${ink}" ${ital ? 'font-style="italic"' : ''} text-anchor="middle" transform="rotate(${rot} ${x} ${y})" opacity=".85">${t}</text>`);
+  const nm = (x, y, t, s, ital = false, rot = 0) => add('back', `<text x="${x}" y="${y}" font-family="IM Fell English,serif" font-size="${s}" fill="${ink}" ${ital ? 'font-style="italic"' : ''} text-anchor="middle" transform="rotate(${rot} ${x} ${y})" opacity=".85" filter="url(#rough)">${t}</text>`);
   if (PC) { nm(330, 500, 'Hobbiton', 30); nm(760, 640, 'Bywater', 24); nm(1770, 120, 'The Old Forest', 30, true); nm(1440, 470, 'Brandywine', 22, true, -72); nm(980, 840, 'Green Hill Country', 22, true); nm(330, 1000, 'Woody End', 22, true); nm(-280, 500, 'Michel Delving', 24); nm(-270, 900, 'The White Downs', 20, true); }
   else { nm(240, 1280, 'Hobbiton', 44); nm(560, 1450, 'Bywater', 36); nm(960, 860, 'Old Forest', 38, true); nm(770, 1560, 'Brandywine', 32, true, -80); nm(220, 2080, 'Woody End', 34, true); }
   (PC ? [[330, 520], [760, 655], [1190, 575], [-280, 520]] : [[240, 1300], [560, 1470]]).forEach(([x, y]) => add('back', `<circle cx="${x}" cy="${y}" r="${7 * k}" fill="${red}"/><circle cx="${x}" cy="${y}" r="${12 * k}" fill="none" stroke="${red}" stroke-width="${1.5 * k}"/>`));
@@ -234,16 +319,23 @@ function redbook() {
   const [px, py] = P.compass;
   add('back', `<g transform="translate(${px},${py})" stroke="${ink}" fill="none"><circle r="70" stroke-width="1.5" stroke-opacity=".6"/><circle r="58" stroke-width=".8" stroke-opacity=".5"/></g><text x="${px}" y="${py - 110}" font-family="IM Fell English,serif" font-size="26" fill="${red}" text-anchor="middle">N</text>`);
   add('moving', `<g transform="translate(${px},${py})"><g class="needle"><path d="M0,-96 L14,0 L0,96 L-14,0Z" fill="${red}" fill-opacity=".85"/><path d="M-96,0 L0,-14 L96,0 L0,14Z" fill="${ink}" fill-opacity=".55"/></g></g>`);
+  // a candle standing on the page: its wax, drips and brass dish are drawn here; the apps light the flame
   const [fx, fy, fs] = P.fire;
-  add('moving', `<circle class="pulse" cx="${fx}" cy="${fy - 30 * fs}" r="${230 * fs}" fill="url(#fire)"/>` + at(fx, fy, fs,
-    `<path d="M-46,24 l92,-30 M-46,-6 l92,30" stroke="#5A3F22" stroke-width="9" stroke-linecap="round"/>
-     <path class="flame" d="M0,-118 C34,-72 46,-46 30,-6 C22,14 -22,14 -30,-6 C-44,-40 -18,-62 0,-118Z" fill="#C8401F"/>
-     <path class="flame b" d="M2,-74 C22,-46 26,-30 16,-8 C10,4 -12,4 -16,-8 C-24,-30 -8,-44 2,-74Z" fill="#F29A3A"/>
-     <path class="flame c" d="M2,-40 C12,-26 12,-16 7,-6 C4,0 -6,0 -8,-6 C-11,-16 -4,-24 2,-40Z" fill="#FFE07A"/>` +
-    [...Array(6)].map((_, i) => `<circle class="ember" style="animation-duration:${2.4 + i * .4}s;animation-delay:-${i * .7}s" cx="${-20 + i * 8}" cy="-100" r="2.4" fill="#FFC56A"/>`).join('')));
-  add('back', `<rect x="${X0 + 28}" y="28" width="${X1 - X0 - 56}" height="${H - 56}" fill="none" stroke="${ink}" stroke-opacity=".55" stroke-width="2"/><rect x="${X0 + 38}" y="38" width="${X1 - X0 - 76}" height="${H - 76}" fill="none" stroke="${ink}" stroke-opacity=".35"/>`);
-  if (PC) add('back', `<rect x="28" y="28" width="1864" height="1024" fill="none" stroke="${ink}" stroke-opacity=".0"/>`);
-  grain('back', 1);
+  add('back', `<circle cx="${fx}" cy="${fy}" r="${300 * fs}" fill="url(#fire)" opacity=".55"/>` + at(fx, fy, fs,
+    `<ellipse cx="6" cy="186" rx="96" ry="20" fill="#3A2614" opacity=".22"/>
+     <ellipse cx="0" cy="172" rx="78" ry="18" fill="#6E5220"/><ellipse cx="0" cy="166" rx="78" ry="17" fill="url(#brass)"/><ellipse cx="0" cy="162" rx="58" ry="10" fill="#B8954A"/>
+     <path d="M-60,166 q-30,4 -38,-8 q-6,-12 10,-14" stroke="url(#brass)" stroke-width="7" fill="none" stroke-linecap="round"/>
+     <rect x="-24" y="10" width="48" height="152" rx="4" fill="url(#wax)"/>
+     <ellipse cx="0" cy="10" rx="24" ry="6" fill="#F7EFDC"/><ellipse cx="0" cy="11" rx="17" ry="3.6" fill="#E6D9BC"/>
+     <path d="M-24,14 q-4,22 2,34 q6,10 2,26 q-2,8 4,10 v-58z" fill="#F4EBD6"/><path d="M16,12 q8,10 5,30 q-2,10 3,16 q4,-14 0,-46z" fill="#F4EBD6"/>
+     <path d="M0,8 q-2,-8 1,-14" stroke="#2B1E12" stroke-width="2.4" fill="none" stroke-linecap="round"/>`));
+  add('moving', `<circle class="pulse" cx="${fx}" cy="${fy - 34 * fs}" r="${150 * fs}" fill="url(#fire)"/>` + at(fx, fy - 4 * fs, fs * .52,
+    `<path class="flame" d="M0,-118 C34,-72 46,-46 30,-6 C22,14 -22,14 -30,-6 C-44,-40 -18,-62 0,-118Z" fill="#E8762A"/>
+     <path class="flame b" d="M2,-74 C22,-46 26,-30 16,-8 C10,4 -12,4 -16,-8 C-24,-30 -8,-44 2,-74Z" fill="#F7B24A"/>
+     <path class="flame c" d="M2,-40 C12,-26 12,-16 7,-6 C4,0 -6,0 -8,-6 C-11,-16 -4,-24 2,-40Z" fill="#FFF0B0"/>`));
+  add('back', `<g filter="url(#rough)"><rect x="${X0 + 48}" y="48" width="${X1 - X0 - 96}" height="${H - 96}" fill="none" stroke="${ink}" stroke-opacity=".5" stroke-width="2"/><rect x="${X0 + 58}" y="58" width="${X1 - X0 - 116}" height="${H - 116}" fill="none" stroke="${ink}" stroke-opacity=".3"/></g>`);
+  vignette('#2B1A0C', .28);
+  grain('back', 1.2);
   return { ink: ['#2B1E12', red, '#6A5236'] };
 }
 
@@ -258,8 +350,18 @@ function starlit() {
   <radialGradient id="cab"><stop offset="0" stop-color="#FFC867" stop-opacity=".35"/><stop offset="1" stop-color="#FFC867" stop-opacity="0"/></radialGradient>
   <filter id="blur" x="-1" y="-1" width="3" height="3"><feGaussianBlur stdDeviation="${PC ? 30 : 40}"/></filter>`);
   add('back', `<rect x="${X0}" y="0" width="${X1 - X0}" height="${H}" fill="url(#sky)"/>`);
-  add('back', PC ? `<path d="M-300,-40 C700,180 1100,300 2400,600" stroke="url(#mw)" stroke-width="260" fill="none" filter="url(#blur)"/>` : `<path d="M-100,600 C300,800 700,1000 1200,1500" stroke="url(#mw)" stroke-width="300" fill="none" filter="url(#blur)"/>`);
+  const mwD = PC ? 'M-300,-40 C700,180 1100,300 2400,600' : 'M1200,980 C820,1060 420,1260 -120,1560';
+  def(`<filter id="dust" x="-1" y="-1" width="3" height="3"><feGaussianBlur stdDeviation="${PC ? 14 : 18}"/></filter>`);
+  add('back', `<path d="${mwD}" stroke="url(#mw)" stroke-width="${PC ? 300 : 340}" fill="none" filter="url(#blur)"/><path d="${mwD}" stroke="#C9C0FF" stroke-opacity=".12" stroke-width="${PC ? 120 : 140}" fill="none" filter="url(#blur)"/><path d="${mwD}" stroke="#05081A" stroke-opacity=".22" stroke-width="${PC ? 26 : 30}" fill="none" filter="url(#dust)" transform="translate(${PC ? 10 : 14},${PC ? 12 : 16})"/>`);
   const r = rng(42), skyH = PC ? 700 : 1500;
+  { // the drift of faint stars along the band: sample the curve and scatter about it
+    const pts = PC ? [[-300, -40], [700, 180], [1100, 300], [2400, 600]] : [[1200, 980], [820, 1060], [420, 1260], [-120, 1560]];
+    const bez = t => [0, 1].map(k => Math.pow(1 - t, 3) * pts[0][k] + 3 * Math.pow(1 - t, 2) * t * pts[1][k] + 3 * (1 - t) * t * t * pts[2][k] + t * t * t * pts[3][k]);
+    let dots = '';
+    for (let i = 0; i < (PC ? 900 : 700); i++) { const [bx, by] = bez(r()), g = (r() + r() + r() - 1.5) * (PC ? 110 : 130); if (by + g > skyH * .95) continue;
+      dots += `<circle cx="${f1(bx + g * .4)}" cy="${f1(by + g)}" r="${f1(.4 + r() * .7)}" opacity="${f1(.25 + r() * .5)}"/>`; }
+    add('back', `<g fill="#E6E4FF">${dots}</g>`);
+  }
   for (let i = 0; i < (PC ? 720 : 420); i++) { const x = X0 + r() * (X1 - X0), y = Math.pow(r(), 1.3) * skyH, big = r() < .06; add('back', `<circle cx="${f1(x)}" cy="${f1(y)}" r="${big ? 2.4 : f1(.6 + r() * 1.1)}" fill="${r() < .15 ? '#FFE2B0' : r() < .3 ? '#C5D3FF' : '#F1F0EB'}" opacity="${f1(.35 + r() * .6)}"/>`); }
   for (let i = 0; i < 40; i++) { const x = X0 + r() * (X1 - X0), y = r() * skyH * .6; add('moving', `<circle class="tw" style="animation-duration:${f1(2 + r() * 3.5)}s;animation-delay:-${f1(r() * 5)}s" cx="${f1(x)}" cy="${f1(y)}" r="${f1(1.4 + r() * 1.2)}" fill="#FFF8E6"/>`); }
   const [mx, my, mr] = P.moon;
@@ -273,11 +375,25 @@ function starlit() {
   }
   const ly = P.lakeY;
   add('back', `<rect x="${X0}" y="${ly}" width="${X1 - X0}" height="${H - ly + 10}" fill="url(#lake)"/>`);
+  { // the mountains upside down in the still water, fading with depth
+    const near = PC ? mountains(720, 170, 13, .58, [[640, 190, 300], [1500, 120, 240], [-300, 160, 260], [2150, 120, 240]]) : mountains(1680, 200, 13, .58, [[260, 260, 300], [900, 160, 260]]);
+    def(`<linearGradient id="refl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".5"/><stop offset=".5" stop-color="#fff" stop-opacity=".12"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient><mask id="reflm"><rect x="${X0}" y="${ly}" width="${X1 - X0}" height="${H - ly}" fill="url(#refl)"/></mask>`);
+    add('back', `<g mask="url(#reflm)"><g transform="translate(0,${2 * ly}) scale(1,-1)"><path d="${near}" fill="#5B64A0" opacity=".55"/></g></g>`);
+    // stars in the water: a few bright ones, stretched by the ripples
+    const rr = rng(43); let st = '';
+    for (let i = 0; i < (PC ? 90 : 60); i++) { const x = X0 + rr() * (X1 - X0), y = ly + 8 + Math.pow(rr(), 1.6) * (PC ? 220 : 420), w = 3 + rr() * 6; st += `<rect x="${f1(x)}" y="${f1(y)}" width="${f1(w)}" height="1.4" rx=".7" opacity="${f1(.15 + rr() * .35)}"/>`; }
+    add('back', `<g fill="#E8E6FF">${st}</g>`);
+    // the line where water meets the far shore catches the sky
+    add('back', `<rect x="${X0}" y="${ly - 1}" width="${X1 - X0}" height="2" fill="#AEB8E8" opacity=".35"/>`);
+  }
+  haze('back', ly - (PC ? 70 : 110), PC ? 72 : 112, '#7C86C4', .35);
   const [gx, gy] = P.glint;
   [[-80, 0, 160], [-60, 28, 120], [-44, 58, 88], [-30, 94, 60], [-20, 136, 40], [-12, 186, 24]].forEach(([dx, dy, w], i) => add('moving', `<path class="glint" style="animation-duration:${3 + i * .5}s;animation-delay:-${i * .6}s" d="M${gx + dx},${gy + dy} h${w}" stroke="#FFF3D6" stroke-width="${PC ? 4 : 5}" stroke-linecap="round"/>`));
   add('back', PC ? `<path d="M200,830 h80 M760,850 h50 M1100,820 h60 M1780,860 h70 M-300,840 h70 M2200,830 h60" stroke="#AEB8E8" stroke-width="2" stroke-linecap="round" opacity=".3"/>` : '');
+  def(`<linearGradient id="lmist" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#B9C2EE" stop-opacity="0"/><stop offset=".5" stop-color="#B9C2EE" stop-opacity=".22"/><stop offset="1" stop-color="#B9C2EE" stop-opacity="0"/></linearGradient>`);
+  add('moving', `<rect class="mist" x="${X0 - 200}" y="${ly + (PC ? 30 : 60)}" width="${X1 - X0 + 400}" height="${PC ? 90 : 140}" fill="url(#lmist)"/>`);
   // the near shore, pines and the cabin
-  const shore = S === 'winter' ? '#C8D0EA' : '#0A0F26', pineC = '#080C1E';
+  const shore = S === 'winter' ? vg('#A9B2DA', '#4C5588') : vg('#121a3a', '#070B1E'), pineC = '#080C1E';
   add('front', PC ? `<path d="M${X0 - 20},1090 L${X0 - 20},850 C-100,820 200,820 480,840 C700,860 820,900 900,950 C940,990 960,1040 960,1090 Z" fill="${shore}"/>`
                   : `<path d="M-20,2410 L-20,1880 C160,1850 360,1870 520,1930 C600,1960 660,2040 680,2410 Z" fill="${shore}"/>`);
   const pine = (x, y, h) => add('front', `<path d="M${f1(x)},${f1(y - h)} l${f1(h * .22)},${f1(h * .38)} h-${f1(h * .1)} l${f1(h * .28)},${f1(h * .36)} h-${f1(h * .12)} l${f1(h * .3)},${f1(h * .32)} h-${f1(h * 1.16)} l${f1(h * .3)},-${f1(h * .32)} h-${f1(h * .12)} l${f1(h * .28)},-${f1(h * .36)} h-${f1(h * .1)}z" fill="${pineC}"/>` +
@@ -287,7 +403,8 @@ function starlit() {
   const [kx, ky] = P.cabin, ks = PC ? 1 : 1.25;
   add('front', `<circle cx="${kx}" cy="${ky}" r="${90 * ks}" fill="url(#cab)"/><path d="M${kx - 40 * ks},${ky + 25 * ks} v-${34 * ks} l${40 * ks},-${30 * ks} l${40 * ks},${30 * ks} v${34 * ks}z" fill="${pineC}"/>` + (S === 'winter' ? `<path d="M${kx - 44 * ks},${ky - 8 * ks} l${44 * ks},-${32 * ks} l${44 * ks},${32 * ks} l-${8 * ks},0 l-${36 * ks},-${24 * ks} l-${36 * ks},${24 * ks}z" fill="#E8ECFA"/>` : ''));
   add('over', `<g class="flicker"><rect x="${kx - 14 * ks}" y="${ky - 3 * ks}" width="${14 * ks}" height="${14 * ks}" fill="#FFC867"/><rect x="${kx + 6 * ks}" y="${ky - 3 * ks}" width="${14 * ks}" height="${14 * ks}" fill="#FFC867"/></g>`);
-  grain('front', .5);
+  vignette('#02030C', .3);
+  grain('front', .6);
   return { ink: ['#EEE9DE', '#CEBE9B', '#9C927B'], shadow: true };
 }
 
@@ -312,6 +429,10 @@ function elven() {
     <path d="M${X0 - 20},1090 L${X0 - 20},420 C-200,400 -60,440 0,440 C60,440 140,500 200,580 C260,660 300,760 330,1090Z" fill="#11201F"/>`);
   else add('back', `<path d="M-20,2410 L-20,1100 C60,1140 140,1260 200,1400 C260,1540 300,1700 330,2410 Z" fill="#0B1418"/>
     <path d="M1100,2410 L1100,1000 C1020,1060 960,1200 920,1360 C880,1520 860,1700 840,2410Z" fill="#0B1418"/>`);
+  // the far side of the valley: ridges of grey stone fading into the mist
+  if (!PC) { land('back', mountains(1260, 160, 51, .52, [[300, 140, 300], [860, 110, 260]]), '#1C3138', '#0F1D22');
+             land('back', mountains(1380, 120, 57, .55, [[620, 120, 300]]), '#183036', '#0C171B'); }
+  else land('back', mountains(620, 110, 51, .52, [[300, 90, 280], [1700, 100, 300]]), '#1A2E34', '#0E1A1F');
   add('back', `<rect x="${X0}" y="${PC ? 560 : 1300}" width="${X1 - X0}" height="${PC ? 160 : 200}" fill="url(#mist)" opacity=".6"/>`);
   add('under', `<rect class="mist" x="${X0 - 200}" y="${PC ? 640 : 1500}" width="${X1 - X0 + 400}" height="${PC ? 140 : 220}" fill="url(#mist)" opacity=".5"/>`);
   // the knoll the grove stands on
@@ -319,22 +440,49 @@ function elven() {
     <path d="M560,940 C660,905 760,893 860,886 M1180,884 C1300,892 1400,906 1480,940" stroke="${S === 'winter' ? '#F2F7F8' : '#5E8F87'}" stroke-width="2.5" fill="none" opacity=".6" stroke-linecap="round"/>`);
   else add('mid', `<path d="M60,2410 C120,2060 260,1930 420,1906 C480,1898 540,1894 600,1896 C700,1900 820,1930 900,2010 C960,2080 990,2200 1010,2410Z" fill="url(#knoll)"/>
     <path d="M160,2050 C240,1960 340,1918 440,1906 M640,1898 C760,1910 860,1950 920,2030" stroke="${S === 'winter' ? '#F2F7F8' : '#5E8F87'}" stroke-width="3" fill="none" opacity=".6" stroke-linecap="round"/>`);
-  const rt = rng(31);
+  // mallorn trees: trunks that flare into roots, silver bark lit from the star's side, crowns in tiers
+  const rt = rng(31), [stx] = P.star;
+  const bark = vg('#E4EEF0', '#9DB2B8');
   const tree = (x, base, h, w, o) => {
-    let s = `<g opacity="${o}"><path d="M${x - w * 2.6},${base + 6} q${w * 1.4},-2 ${w * 1.6},-${w * 1.2} L${x + w},${base - w * 1.2} q${w * .2},${w * 1.2} ${w * 1.6},${w * 1.2 + 6}Z" fill="#C9D8DC"/>
-      <path d="M${x - w},${base} C${x - w * .6},${base - h * .5} ${x - w * .3},${base - h * .8} ${x},${base - h} C${x + w * .3},${base - h * .8} ${x + w * .6},${base - h * .5} ${x + w},${base}Z" fill="#C9D8DC"/>
-      <path d="M${x},${base - h * .55} q${h * .12},-${h * .1} ${h * .2},-${h * .24} M${x},${base - h * .7} q-${h * .1},-${h * .08} -${h * .17},-${h * .2}" stroke="#C9D8DC" stroke-width="${w * .35}" fill="none" stroke-linecap="round"/>`;
-    for (let k = 0; k < 7; k++) { const a = rt() * Math.PI * 2, d = rt() * h * .16; s += `<ellipse cx="${f1(x + Math.cos(a) * d * 1.4)}" cy="${f1(base - h - h * .05 + Math.sin(a) * d * .6)}" rx="${f1(h * .12 + rt() * h * .05)}" ry="${f1(h * .07 + rt() * h * .03)}" fill="${crowns[k % 3]}" opacity=".55"/>`; }
-    add('mid', s + '</g>');
+    const lit = x < stx ? 1 : -1;            // the side facing the star
+    const hazeK = 1 - o;                      // further trees sink into the dark
+    const trunkC = mix('#D5E2E5', '#0E1A20', hazeK * .55), shadeC = mix('#8FA6AD', '#0E1A20', hazeK * .55);
+    let g = `<g>`;
+    // roots and the flared foot
+    g += `<path d="M${f1(x - w * 3.2)},${base + 8} C${f1(x - w * 2)},${base + 2} ${f1(x - w * 1.4)},${f1(base - w * .6)} ${f1(x - w * .9)},${f1(base - w * 2.4)} L${f1(x - w * .55)},${f1(base - h * .62)} C${f1(x - w * .3)},${f1(base - h * .86)} ${f1(x - w * .12)},${f1(base - h * .97)} ${x},${f1(base - h)} C${f1(x + w * .12)},${f1(base - h * .97)} ${f1(x + w * .3)},${f1(base - h * .86)} ${f1(x + w * .55)},${f1(base - h * .62)} L${f1(x + w * .9)},${f1(base - w * 2.4)} C${f1(x + w * 1.4)},${f1(base - w * .6)} ${f1(x + w * 2)},${base + 2} ${f1(x + w * 3.2)},${base + 8}Z" fill="${trunkC}"/>`;
+    // the shaded side of the trunk
+    g += `<path d="M${x},${f1(base - h)} C${f1(x + lit * -w * .3)},${f1(base - h * .86)} ${f1(x + lit * -w * .55)},${f1(base - h * .62)} ${f1(x + lit * -w * .9)},${f1(base - w * 2.4)} C${f1(x + lit * -w * 1.4)},${f1(base - w * .6)} ${f1(x + lit * -w * 2)},${base + 2} ${f1(x + lit * -w * 3.2)},${base + 8} L${x},${base + 8}Z" fill="${shadeC}" opacity=".55"/>`;
+    // bark: a few long fine lines
+    for (let k = 0; k < 3; k++) { const dx = (k - 1) * w * .35; g += `<path d="M${f1(x + dx * 1.6)},${base} C${f1(x + dx * 1.2)},${f1(base - h * .3)} ${f1(x + dx * .7)},${f1(base - h * .55)} ${f1(x + dx * .3)},${f1(base - h * .8)}" stroke="${shadeC}" stroke-width="${f1(Math.max(1, w * .12))}" fill="none" opacity=".45"/>`; }
+    // branches rising into the crown
+    for (const [side, at0, len] of [[-1, .5, .22], [1, .58, .2], [-1, .7, .16], [1, .78, .14]]) {
+      const y0 = base - h * at0, x0 = x + side * w * .3;
+      g += `<path d="M${f1(x0)},${f1(y0)} q${f1(side * h * len * .5)},-${f1(h * len * .3)} ${f1(side * h * len)},-${f1(h * len * .9)}" stroke="${trunkC}" stroke-width="${f1(w * .42)}" fill="none" stroke-linecap="round"/>`;
+    }
+    // the crown in three tiers, lit on top, each wider below
+    const tiers = [[.62, .5, .05, 0], [.78, .4, .048, 1], [.93, .28, .045, 2]];
+    for (const [ty, wid, th, ci] of tiers) {
+      // one soft canopy per tier: a flat lens with rounded lobes along its top, one gradient across it
+      const cy = base - h * ty, half = h * wid * .5, c = mix(crowns[ci], '#0E1A20', hazeK * .5);
+      const id = 'c' + (gid++);
+      def(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="0" y1="${f1(cy - h * th * 2.2)}" x2="0" y2="${f1(cy + h * th)}"><stop offset="0" stop-color="${mix(c, '#FFFFFF', .3)}"/><stop offset=".55" stop-color="${c}"/><stop offset="1" stop-color="${mix(c, '#0E1A20', .45)}"/></linearGradient>`);
+      let t = `<ellipse cx="${x}" cy="${f1(cy)}" rx="${f1(half)}" ry="${f1(h * th)}"/>`;
+      const lobes = 5;
+      for (let k = 0; k < lobes; k++) { const fx = (k / (lobes - 1)) * 2 - 1, lx = x + fx * half * .78 + (rt() - .5) * half * .08, ly = cy - h * th * (.55 + (1 - Math.abs(fx)) * .55);
+        t += `<ellipse cx="${f1(lx)}" cy="${f1(ly)}" rx="${f1(half * (.26 + (1 - Math.abs(fx)) * .1))}" ry="${f1(h * th * (.85 + (1 - Math.abs(fx)) * .35))}"/>`; }
+      g += `<g fill="url(#${id})" opacity="${f1(.86 - hazeK * .2)}">${t}</g>`;
+    }
+    add('mid', g + `</g>`);
   };
-  (PC ? [[720, 906, 330, 10, .55], [860, 890, 420, 13, .7], [1010, 880, 520, 16, .9], [1160, 884, 450, 14, .8], [1300, 894, 360, 11, .65], [620, 930, 260, 8, .45], [1400, 912, 280, 8, .5]]
-      : [[300, 1960, 420, 12, .6], [450, 1910, 560, 16, .85], [620, 1900, 620, 18, .95], [780, 1930, 480, 14, .75], [200, 2010, 320, 9, .45], [880, 1990, 340, 10, .5]]).forEach(a => tree(...a));
+  (PC ? [[620, 930, 260, 8, .45], [1400, 912, 280, 8, .5], [720, 906, 330, 10, .6], [1300, 894, 360, 11, .68], [860, 890, 420, 13, .78], [1160, 884, 450, 14, .85], [1010, 880, 520, 16, .95]]
+      : [[200, 2010, 320, 9, .45], [880, 1990, 340, 10, .5], [300, 1960, 420, 12, .62], [780, 1930, 480, 14, .76], [450, 1910, 560, 16, .86], [620, 1900, 620, 18, .96]]).forEach(a => tree(...a));
   const lamps = PC ? [[880, 760], [1030, 700], [1180, 740], [960, 820], [1110, 800], [1250, 830], [760, 820]] : [[420, 1700], [560, 1600], [700, 1680], [500, 1800], [640, 1780], [330, 1820]];
   lamps.forEach(([x, y], i) => add('moving', `<circle class="lamp" style="animation-duration:${3 + i % 3}s;animation-delay:-${i * .9}s" cx="${x}" cy="${y}" r="${PC ? 22 : 28}" fill="url(#lampglow)"/><circle cx="${x}" cy="${y}" r="${PC ? 4.5 : 6}" fill="#E5DCC2"/>`));
   for (let i = 0; i < 18; i++) { const x = PC ? 640 + r() * 760 : 200 + r() * 700, y = PC ? 900 + r() * 120 : 1950 + r() * 200; add('moving', `<circle class="rise" style="animation-duration:${f1(9 + r() * 8)}s;animation-delay:-${f1(r() * 16)}s" cx="${f1(x)}" cy="${f1(y)}" r="2" fill="#DCEBF0"/>`); }
   if (PC) add('mid', `<path d="M560,1090 C700,1010 900,990 1100,996 S1420,1030 1460,1090Z" fill="#132A30" opacity=".85"/>`);
   // (winter: the knoll's own colours turn snowy)
-  grain('mid', .45);
+  vignette('#020405', .35);
+  grain('mid', .6);
   return { ink: ['#E6ECEE', '#B9C6CA', '#7D898D'], shadow: true };
 }
 
