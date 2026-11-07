@@ -1141,7 +1141,7 @@ struct Fireflies : Element {
     std::vector<F> f;
     uint32_t col;
     explicit Fireflies(SceneId id) {
-        smooth = true;
+        smooth = false;   // they drift slowly: the ordinary frame rate is plenty (a wide band, so no extra frames)
         col = id == LORIEN ? 0xFFE08A : id == SHIRE ? 0xFFF6CC : id == REDBOOK ? 0xFFC56A : (id == HAVENS || id == ELVEN) ? 0xE6F6D8 : 0xE8F59A;
         Rng r(1966);
         for (int i = 0; i < 22; i++) f.push_back({ frand10(ART_L + r() * (ART_R - ART_L)), frand10(640 + r() * 330), frand10(r() * 6.28), frand10(r() * 6.28), (float)(i % 3) });
